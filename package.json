@@ -1,0 +1,30 @@
+{
+  "name": "quiz-game-backend",
+  "version": "0.0.0",
+  "description": "",
+  "main": "App.js",
+  "scripts": {
+    "start": "ts-node src/App.ts",
+    "build": "tsc",
+    "tsc": "npx tsc"
+  },
+  "keywords": [],
+  "author": "Yu",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^18.19.6",
+    "@typescript-eslint/eslint-plugin": "^5.53.0",
+    "@typescript-eslint/parser": "^5.53.0",
+    "cross-env": "^7.0.3",
+    "eslint": "^8.34.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.2.2"
+  },
+  "dependencies": {
+    "@types/async-lock": "^1.4.2",
+    "async-lock": "^1.4.1",
+    "dotenv": "^16.0.3",
+    "moment": "^2.30.1",
+    "socket.io": "^4.8.3"
+  }
+}
