@@ -14,7 +14,7 @@ export const StartSocketServer = async () => {
       maxHttpBufferSize: 10e8,
     })
 
-    io.on('connection', onConnection);
+    io.on('connection', OnConnection);
 
     io.listen(SOCKET_PORT);
     ModuleLogger('Socket Server', `Socket server is running on port ${SOCKET_PORT}`);
@@ -24,7 +24,7 @@ export const StartSocketServer = async () => {
   }
 }
 
-const onConnection = (socket: any) => {
+const OnConnection = (socket: any) => {
   ModuleLogger('Socket Server', `New socket connected: ${socket.id}`);
 
   UserContextCreation(socket);
