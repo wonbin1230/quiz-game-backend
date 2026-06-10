@@ -1,5 +1,6 @@
 import { Socket } from 'socket.io';
 import { UserContext } from './UserContext';
+import { ModuleLogger } from '../../utils/log';
 
 export const unregisteredContextMap = new Map<string, UserContext>();
 export const userContextMap = new Map<string, UserContext>();
@@ -9,16 +10,14 @@ export const UserContextCreation = (socket: Socket): void => {
 
   unregisteredContextMap.set(socket.id, userContext);
 
-  userContext.socket.on('ping', () => {
-    userContext.socket.emit('pong');
-  })
-
   userContext.socket.on('disconnect', () => {
     unregisteredContextMap.delete(socket.id);
 
     if (userContext.userId) {
       userContextMap.delete(userContext.userId);
     }
+
+    ModuleLogger('Socket Server', `Player disconnected: ${userContext.socket.id}`);
   })
 }
 

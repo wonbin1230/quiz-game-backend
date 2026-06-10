@@ -1,25 +1,27 @@
 import AsyncLock from 'async-lock';
 import { UserContext } from '../socket/user/UserContext';
+import { ManagerContext } from '../socket/manager/ManagerContext';
 import { EventLockAttemptProceed, EventLockSetUnlock } from '../utils/rate-limit';
+import { ContextBase } from '../socket/ContextBase';
 
-export abstract class ControllerBase {
-  systemName: string;
-  context: UserContext;
+export abstract class ControllerBase<T extends ContextBase> {
+  context: T;
+  name: string;
   eventLocks: AsyncLock = new AsyncLock();
 
-  constructor(context: UserContext, systemName: string) {
+  constructor(context: T, name: string) {
     this.context = context;
-    this.systemName = systemName;
+    this.name = name;
   }
 
   abstract EventRegisters(): void;
 
   EmitSuccessResponse = (event: string, data: any) => {
-    this.context.EmitSuccessResponse(`${this.systemName}:${event}`, data);
+    this.context.EmitSuccessResponse(`${this.name}:${event}`, data);
   }
 
   EmitFailResponse = (event: string, error: any) => {
-    this.context.EmitFailResponse(`${this.systemName}:${event}`, error);
+    this.context.EmitFailResponse(`${this.name}:${event}`, error);
   }
 
   EventRegister = (event: string, handler: (...args: any[]) => Promise<void>): void => {
@@ -29,14 +31,14 @@ export abstract class ControllerBase {
   LockHandler = (event: string, handler: (...args: any[]) => Promise<void>): (...args: any[]) => Promise<void> => {
     return async (...args: any[]) => {
       try {
-        EventLockAttemptProceed(this.context.socket.id, `${this.systemName}:${event}`);
+        EventLockAttemptProceed(this.context.socket.id, `${this.name}:${event}`);
         await this.eventLocks.acquire(event, async () => {
           await handler(...args);
         })
       } catch (error: any) {
         //
       } finally {
-        EventLockSetUnlock(this.context.socket.id, `${this.systemName}:${event}`);
+        EventLockSetUnlock(this.context.socket.id, `${this.name}:${event}`);
       }
     }
   }

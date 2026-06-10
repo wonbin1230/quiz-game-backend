@@ -1,8 +1,8 @@
 import { SOCKET_PORT } from '../config';
 
-import { Server } from 'socket.io';
+import { Server, Socket } from 'socket.io';
 import { ModuleLogger } from '../utils/log';
-import { UserContextCreation } from './user/UserSocket';
+import { SocketSystemHandlers } from './systems/SocketSystem';
 
 export const StartSocketServer = async () => {
   try {
@@ -17,6 +17,8 @@ export const StartSocketServer = async () => {
     io.on('connection', OnConnection);
 
     io.listen(SOCKET_PORT);
+    ServerIO = io;
+
     ModuleLogger('Socket Server', `Socket server is running on port ${SOCKET_PORT}`);
 
   } catch (error: any) {
@@ -24,12 +26,12 @@ export const StartSocketServer = async () => {
   }
 }
 
-const OnConnection = (socket: any) => {
-  ModuleLogger('Socket Server', `New socket connected: ${socket.id}`);
-
-  UserContextCreation(socket);
+const OnConnection = (socket: Socket) => {
+  SocketSystemHandlers(socket);
 
   socket.on('disconnect', () => {
-    ModuleLogger('Socket Server', `User disconnected: ${socket.id}`);
-  })
+    ModuleLogger('Socket Server', `Client disconnected: ${socket.id}`);
+  });
 }
+
+export let ServerIO: Server | null = null;
