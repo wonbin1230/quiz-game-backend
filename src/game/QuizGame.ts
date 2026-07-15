@@ -106,7 +106,7 @@ export class QuizGame {
 
   private AdvanceToNextQuestion() {
     this.currentQuizIndex += 1;
-    if (this.currentQuizIndex >= this.quizList.length) {
+    if (this.currentQuizIndex > this.quizList.length) {
       return;
     }
 
