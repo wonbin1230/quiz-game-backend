@@ -6,8 +6,8 @@ import { quizList } from '../data/quiz';
 import { ModuleLogger } from '../utils/log';
 
 export class QuizGame {
-  private readonly VOTING_TIME = 10;
-  private readonly ANSWER_SHOW_TIME = 5;
+  private readonly VOTING_TIME = 12;
+  private readonly PREPARE_TIME = 3;
 
   room: QuizGameRoomSocket
   roomId: string
@@ -15,11 +15,12 @@ export class QuizGame {
   
   currentQuizIndex = 0;
   quizList: IQuizData[] = quizList;
-  
   state: GameState = GameState.Prepare;
   
   private currentAnswers = new Map<string, number>();
   private currentQuestionTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  private currentPrepareTimeout: NodeJS.Timeout | null = null;
 
   constructor(room: QuizGameRoomSocket, socket: Socket) {
     this.room = room;
@@ -35,11 +36,18 @@ export class QuizGame {
     }
 
     this.state = GameState.StartGame;
-    this.room.BroadcastMessage('QuizGame:GameStarted', { roomId: this.roomId, quizCount: this.quizList.length });
-    this.BroadcastCurrentQuestion();
+    this.room.BroadcastMessage('QuizGame:GameStarted', {
+      roomId: this.roomId,
+      quizCount: this.quizList.length
+    });
+
+    this.currentPrepareTimeout = setTimeout(() => {
+      this.BroadcastCurrentQuestion();
+    }, this.PREPARE_TIME * 1000);
   }
 
   private BroadcastCurrentQuestion() {
+    this.ClearCurrentPrepareTimeout();
     const currentQuiz = this.quizList[this.currentQuizIndex];
 
     if (!currentQuiz) {
@@ -91,24 +99,26 @@ export class QuizGame {
     this.state = GameState.ShowAnswer;
     const currentQuiz = this.quizList[this.currentQuizIndex];
 
+    this.ClearCurrentQuestionTimeout();
+
     this.room.BroadcastMessage('QuizGame:AnswerReveal', {
       roomId: this.roomId,
       questionIndex: this.currentQuizIndex + 1,
       correctAnswer: currentQuiz.answer,
       totalAnswers: this.currentAnswers.size,
     });
-
-    this.ClearCurrentQuestionTimeout();
-    this.currentQuestionTimeout = setTimeout(() => {
-      this.AdvanceToNextQuestion();
-    }, this.ANSWER_SHOW_TIME * 1000);
   }
 
-  private AdvanceToNextQuestion() {
-    this.currentQuizIndex += 1;
-    if (this.currentQuizIndex > this.quizList.length) {
-      return;
+  public NextQuestion() {
+    if (this.state !== GameState.ShowAnswer) {
+      throw new Error('Next question can only be triggered during ShowAnswer.');
     }
+
+    if (this.currentQuizIndex >= this.quizList.length - 1) {
+      throw new Error('No more questions.');
+    }
+
+    this.currentQuizIndex += 1;
 
     this.room.BroadcastMessage('QuizGame:NextQuestion', {
       roomId: this.roomId,
@@ -125,9 +135,17 @@ export class QuizGame {
     }
   }
 
+  private ClearCurrentPrepareTimeout() {
+    if (this.currentPrepareTimeout) {
+      clearTimeout(this.currentPrepareTimeout);
+      this.currentPrepareTimeout = null;
+    }
+  }
+
   private Reset() {
     this.state = GameState.Prepare;
     this.ClearCurrentQuestionTimeout();
+    this.ClearCurrentPrepareTimeout();
     this.currentQuizIndex = 0;
     this.currentAnswers.clear();
   }

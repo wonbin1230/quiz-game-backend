@@ -1,6 +1,13 @@
 import { ManagerContext } from '../socket/manager/ManagerContext';
 import { ControllerBase } from './ControllerBase';
 import { roomManagerSocket } from '../socket/systems/SocketSystem';
+import {
+  requireManagerLogin,
+  requireOwnedRoom,
+  requireRoomName,
+  WithOwnedRoom,
+  WithRoomName,
+} from './middlewares/room';
 
 export class RoomController extends ControllerBase<ManagerContext> {
   constructor(context: ManagerContext) {
@@ -8,62 +15,47 @@ export class RoomController extends ControllerBase<ManagerContext> {
   }
 
   override EventRegisters(): void {
-    this.EventRegister('Room:CreateRoom', this.OnCreateRoom);
-    this.EventRegister('Room:StartGame', this.OnStartGame);
+    this.EventRegister('Room:CreateRoom', this.OnCreateRoom, [
+      requireManagerLogin,
+      requireRoomName,
+    ]);
+    this.EventRegister('Room:StartGame', this.OnStartGame, [
+      requireManagerLogin,
+      requireRoomName,
+      requireOwnedRoom,
+    ]);
+    this.EventRegister('Room:NextQuestion', this.OnNextQuestion, [
+      requireManagerLogin,
+      requireRoomName,
+      requireOwnedRoom,
+    ]);
   }
 
-  OnCreateRoom = async (data: { roomName: string }) => {
-    try {
-      if (!this.context.managerId) {
-        throw new Error('Manager must be logged in before creating a room.');
-      }
+  OnCreateRoom = async (data: WithRoomName) => {
+    const room = await roomManagerSocket!.CreateRoomSocket(this.context.managerId, data.roomName);
 
-      if (!data?.roomName || typeof data.roomName !== 'string') {
-        throw new Error('roomName is required and must be a string.');
-      }
-
-      const room = await roomManagerSocket!.CreateRoomSocket(this.context.managerId, data.roomName);
-
-      if (!room) {
-        throw new Error('Failed to create room. Please try again.');
-      }
-
-      this.context.socket.join(room.roomId);
-
-      this.EmitSuccessResponse('CreateRoom', { roomId: room.roomId });
-    } catch (error: any) {
-      this.EmitFailResponse('CreateRoom', error);
+    if (!room) {
+      throw new Error('Failed to create room. Please try again.');
     }
+
+    this.context.socket.join(room.roomId);
+
+    this.EmitSuccessResponse('CreateRoom', { roomId: room.roomId });
   }
 
-  OnStartGame = async (data: { roomName: string }) => {
-    try {
-      if (!this.context.managerId) {
-        throw new Error('Manager must be logged in before starting a room.');
-      }
+  OnStartGame = async (data: WithOwnedRoom) => {
+    const gameState = data.room.StartGame();
 
-      if (!data?.roomName || typeof data.roomName !== 'string') {
-        throw new Error('roomName is required and must be a string.');
-      }
+    this.EmitSuccessResponse('StartGame', {
+      roomId: data.room.roomId,
+      roomState: data.room.roomState,
+      gameState: gameState,
+    });
+  }
 
-      const room = roomManagerSocket!.GetRoomSocket(data.roomName);
-      if (!room) {
-        throw new Error('Room not found.');
-      }
+  OnNextQuestion = async (data: WithOwnedRoom) => {
+    data.room.NextQuestion();
 
-      if (room.managerId !== this.context.managerId) {
-        throw new Error('Only the room owner can start this game.');
-      }
-
-      const gameState = room.StartGame();
-
-      this.EmitSuccessResponse('StartGame', {
-        roomId: room.roomId,
-        roomState: room.roomState,
-        gameState: gameState,
-      });
-    } catch (error: any) {
-      this.EmitFailResponse('StartGame', error);
-    }
+    this.EmitSuccessResponse('NextQuestion', { success: true });
   }
 }

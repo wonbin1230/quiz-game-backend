@@ -42,6 +42,13 @@ export class QuizGameRoomSocket {
 		return this.game.state;
 	}
 
+	public NextQuestion = () => {
+		if (!this.game) {
+			throw new Error('Game instance is not initialized.');
+		}
+		this.game.NextQuestion();
+	}
+
 	private OnUserJoin = (data: { userId: string }) => {
 		try {
 			if (this.roomState !== RoomState.Prepare) {
