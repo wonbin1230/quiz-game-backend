@@ -1,0 +1,1053 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quiz Game Flow Test</title>
+  <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --surface-2: #243044;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --manager: #38bdf8;
+      --user: #4ade80;
+      --emit: #fbbf24;
+      --recv: #60a5fa;
+      --error: #f87171;
+      --success: #34d399;
+      --warn: #fb923c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    header h1 {
+      margin: 0 0 12px;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    .config-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .field label {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    input, select {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 8px 10px;
+      min-width: 120px;
+    }
+
+    button {
+      border: none;
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    button:hover { filter: brightness(1.1); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary { background: #2563eb; border-color: #3b82f6; }
+    .btn-manager { background: #0369a1; border-color: var(--manager); }
+    .btn-user { background: #166534; border-color: var(--user); }
+    .btn-danger { background: #991b1b; border-color: #dc2626; }
+    .btn-auto { background: #7c3aed; border-color: #8b5cf6; }
+    .btn-highlight {
+      animation: pulse 1s infinite;
+      box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.45);
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.03); }
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .status-disconnected { background: #7f1d1d; color: #fecaca; }
+    .status-connected { background: #14532d; color: #bbf7d0; }
+
+    main {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 16px;
+      padding: 16px 20px 24px;
+      align-items: start;
+    }
+
+    @media (max-width: 1100px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-header h2 {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
+    .panel-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .user-remove-btn {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      line-height: 1;
+      font-size: 1.1rem;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .user-remove-btn:hover {
+      color: var(--error);
+      border-color: var(--error);
+      background: rgba(248, 113, 113, 0.1);
+    }
+
+    .panel-body {
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .btn-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .section-title {
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-top: 4px;
+    }
+
+    .users-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 12px;
+    }
+
+    .user-card .panel-header { border-left: 3px solid var(--user); }
+    .manager-panel .panel-header { border-left: 3px solid var(--manager); }
+
+    .log {
+      background: #0b1220;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      height: 220px;
+      overflow: auto;
+      padding: 8px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.75rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .log-entry { margin-bottom: 6px; }
+    .log-time { color: var(--muted); }
+    .log-emit { color: var(--emit); }
+    .log-recv { color: var(--recv); }
+    .log-error { color: var(--error); }
+    .log-info { color: var(--success); }
+    .log-warn { color: var(--warn); }
+
+    .auto-status {
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .auto-status.running {
+      border-color: #8b5cf6;
+      color: #ddd6fe;
+    }
+
+    .auto-status.paused {
+      border-color: var(--warn);
+      color: #fed7aa;
+    }
+
+    .top-action-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .top-action-row .auto-status {
+      flex: 1;
+      min-width: 240px;
+      margin: 0;
+    }
+
+    .hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Quiz Game 流程測試</h1>
+    <div class="top-action-row">
+      <button id="userAutoAnswerBtn" class="btn-user">User自動答題</button>
+      <button id="stopUserAutoAnswerBtn" class="btn-danger" disabled>停止 User 自動答題</button>
+      <div class="auto-status" id="userAutoAnswerStatus">User 自動答題：未啟動</div>
+    </div>
+    <div class="config-row">
+      <div class="field">
+        <label for="hostInput">Host</label>
+        <input id="hostInput" type="text" value="localhost" />
+      </div>
+      <div class="field">
+        <label for="portInput">Port</label>
+        <input id="portInput" type="number" value="8000" min="1" max="65535" />
+      </div>
+      <div class="field">
+        <label for="roomNameInput">Room Name</label>
+        <input id="roomNameInput" type="text" value="Wedding" />
+      </div>
+      <div class="field">
+        <label for="managerIdInput">Manager ID</label>
+        <input id="managerIdInput" type="text" value="manager-1" />
+      </div>
+      <button id="connectManagerBtn" class="btn-manager">連線 Manager</button>
+      <button id="addUserBtn" class="btn-user">新增 User</button>
+      <button id="disconnectAllBtn" class="btn-danger">全部斷線</button>
+    </div>
+    <p class="hint" style="margin-top: 10px;">
+      直接用瀏覽器開啟此 HTML 檔即可。Socket 連線位址：<code id="socketUrlPreview">http://localhost:8000</code>
+    </p>
+  </header>
+
+  <main>
+    <section class="panel manager-panel">
+      <div class="panel-header">
+        <h2>Manager</h2>
+        <span id="managerStatus" class="status-badge status-disconnected">未連線</span>
+      </div>
+      <div class="panel-body">
+        <div class="auto-status" id="autoStatus">自動流程：未啟動</div>
+
+        <div class="section-title">手動操作</div>
+        <div class="btn-group">
+          <button class="btn-manager" data-action="manager-login">Login</button>
+          <button data-action="create-room">Create Room</button>
+          <button data-action="start-game">Start Game</button>
+          <button id="nextQuestionBtn" data-action="next-question">Next Question</button>
+        </div>
+
+        <div class="section-title">自動流程</div>
+        <div class="btn-group">
+          <button id="startAutoBtn" class="btn-auto">一鍵自動流程</button>
+          <button id="stopAutoBtn" class="btn-danger" disabled>停止自動</button>
+        </div>
+        <p class="hint">自動流程會跑 Login → Create → Join → Start → 自動答題；到 <code>AnswerReveal</code> 後會暫停，請手動按 <strong>Next Question</strong> 繼續。</p>
+
+        <div class="section-title">事件紀錄</div>
+        <div id="managerLog" class="log"></div>
+        <button data-action="clear-manager-log">清除紀錄</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="users-grid" id="usersContainer"></div>
+    </section>
+  </main>
+
+  <script>
+    const KNOWN_EVENTS = [
+      'Manager:Login',
+      'Room:CreateRoom', 'Room:StartGame', 'Room:NextQuestion',
+      'Room:UserJoined', 'Room:UserLeft',
+      'User:Login',
+      'UserGame:JoinRoom', 'UserGame:LeaveRoom', 'UserGame:SubmitAnswer',
+      'QuizGame:GameStarted', 'QuizGame:Question', 'QuizGame:Settle',
+      'QuizGame:AnswerReveal', 'QuizGame:NextQuestion', 'QuizGame:Finished',
+      'error',
+    ];
+
+    const state = {
+      managerSocket: null,
+      managerLoggedIn: false,
+      roomId: null,
+      users: [],
+      auto: {
+        running: false,
+        paused: false,
+        step: 'idle',
+      },
+      userAutoAnswer: {
+        active: false,
+        step: 'idle',
+      },
+      namePool: [],
+      usedNameSet: new Set(),
+      nextUserIndex: 1,
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function buildFallbackNameList() {
+      const familyNames = ['陳', '林', '黃', '張', '李', '王', '吳', '劉', '蔡', '楊'];
+      const givenNames = [
+        '宇辰', '子晴', '柏翰', '語彤', '承恩', '心妍', '冠廷', '詠涵', '睿哲', '安琪',
+        '浩宇', '雨桐', '俊傑', '怡君', '家豪', '佳穎', '宥廷', '欣妤', '昱凱', '佩珊',
+      ];
+
+      const names = [];
+      for (const family of familyNames) {
+        for (const given of givenNames) {
+          names.push(`${family}${given}`);
+          if (names.length >= 120) {
+            return names;
+          }
+        }
+      }
+      return names;
+    }
+
+    function getSocketUrl() {
+      const host = $('hostInput').value.trim() || 'localhost';
+      const port = $('portInput').value.trim() || '8000';
+      return `http://${host}:${port}`;
+    }
+
+    function updateSocketPreview() {
+      $('socketUrlPreview').textContent = getSocketUrl();
+    }
+
+    function now() {
+      return new Date().toLocaleTimeString('zh-TW', { hour12: false });
+    }
+
+    function formatData(data) {
+      try {
+        return JSON.stringify(data, null, 2);
+      } catch {
+        return String(data);
+      }
+    }
+
+    function appendLog(logEl, type, label, event, data) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<span class="log-time">[${now()}]</span> <span class="log-${type}">${label}</span> <strong>${event}</strong>\n${formatData(data ?? null)}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setAutoStatus(text, mode = '') {
+      const el = $('autoStatus');
+      el.textContent = text;
+      el.className = 'auto-status' + (mode ? ` ${mode}` : '');
+    }
+
+    function setUserAutoAnswerStatus(text, mode = '') {
+      const el = $('userAutoAnswerStatus');
+      el.textContent = text;
+      el.className = 'auto-status' + (mode ? ` ${mode}` : '');
+    }
+
+    async function loadNameList() {
+      try {
+        const res = await fetch('./name-list.json');
+        if (!res.ok) {
+          throw new Error(`讀取失敗: ${res.status}`);
+        }
+        const list = await res.json();
+        if (!Array.isArray(list) || list.length === 0) {
+          throw new Error('name-list.json 內容格式錯誤');
+        }
+        state.namePool = [...new Set(list.map((item) => String(item).trim()).filter(Boolean))];
+      } catch (error) {
+        state.namePool = buildFallbackNameList();
+        appendLog($('managerLog'), 'warn', '[System]', 'name-list', {
+          message: '無法讀取 test/name-list.json，已改用內建中文名單',
+          detail: error?.message ?? String(error),
+        });
+      }
+    }
+
+    function claimNextUserName() {
+      const nextName = state.namePool.find((name) => !state.usedNameSet.has(name));
+      if (!nextName) {
+        return null;
+      }
+      state.usedNameSet.add(nextName);
+      return nextName;
+    }
+
+    function releaseUserName(name) {
+      if (!name) return;
+      state.usedNameSet.delete(name);
+    }
+
+    function highlightNextQuestion(shouldHighlight) {
+      $('nextQuestionBtn').classList.toggle('btn-highlight', shouldHighlight);
+    }
+
+    function createSocket(system) {
+      return io(getSocketUrl(), {
+        query: { system },
+        transports: ['websocket'],
+        autoConnect: true,
+      });
+    }
+
+    function bindSocketLogging(socket, logEl, role) {
+      socket.on('connect', () => {
+        appendLog(logEl, 'info', `[${role}] CONNECTED`, 'connect', { socketId: socket.id });
+      });
+
+      socket.on('disconnect', (reason) => {
+        appendLog(logEl, 'warn', `[${role}] DISCONNECTED`, 'disconnect', { reason });
+      });
+
+      socket.on('connect_error', (err) => {
+        appendLog(logEl, 'error', `[${role}] CONNECT_ERROR`, 'connect_error', { message: err.message });
+      });
+
+      KNOWN_EVENTS.forEach((eventName) => {
+        socket.on(eventName, (data) => {
+          appendLog(logEl, 'recv', `[${role}] RECV`, eventName, data);
+          handleAutoEvent(role, eventName, data);
+          handleUserAutoAnswerEvent(role, eventName, data);
+        });
+      });
+
+      socket.onAny((eventName, data) => {
+        if (KNOWN_EVENTS.includes(eventName)) return;
+        if (eventName.endsWith(':error')) {
+          appendLog(logEl, 'error', `[${role}] ERROR`, eventName, data);
+          return;
+        }
+        appendLog(logEl, 'recv', `[${role}] RECV`, eventName, data);
+      });
+    }
+
+    function emitEvent(socket, logEl, role, event, data) {
+      appendLog(logEl, 'emit', `[${role}] EMIT`, event, data ?? null);
+      socket.emit(event, data);
+    }
+
+    function updateManagerStatus(connected) {
+      const badge = $('managerStatus');
+      badge.textContent = connected ? '已連線' : '未連線';
+      badge.className = `status-badge ${connected ? 'status-connected' : 'status-disconnected'}`;
+    }
+
+    function waitForConnect(socket, timeoutMs = 5000) {
+      if (socket.connected) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          socket.off('connect', onConnect);
+          reject(new Error('連線逾時'));
+        }, timeoutMs);
+        const onConnect = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        socket.on('connect', onConnect);
+      });
+    }
+
+    function connectManager() {
+      if (state.managerSocket?.connected) {
+        appendLog($('managerLog'), 'warn', '[Manager]', 'info', { message: 'Manager 已連線' });
+        return Promise.resolve();
+      }
+
+      const socket = createSocket('Manager');
+      state.managerSocket = socket;
+      state.managerLoggedIn = false;
+      state.roomId = null;
+
+      bindSocketLogging(socket, $('managerLog'), 'Manager');
+
+      socket.on('Manager:Login', () => {
+        state.managerLoggedIn = true;
+      });
+
+      socket.on('Room:CreateRoom', (data) => {
+        state.roomId = data?.roomId ?? null;
+      });
+
+      socket.on('connect', () => updateManagerStatus(true));
+      socket.on('disconnect', () => {
+        updateManagerStatus(false);
+        state.managerLoggedIn = false;
+      });
+
+      return waitForConnect(socket);
+    }
+
+    function createUserCard(index, userId) {
+      const card = document.createElement('article');
+      card.className = 'panel user-card';
+      card.dataset.userIndex = String(index);
+      card.innerHTML = `
+        <div class="panel-header">
+          <div class="panel-header-left">
+            <h2>User ${index}</h2>
+            <span class="status-badge status-disconnected user-status">未連線</span>
+          </div>
+          <button class="user-remove-btn" type="button" data-user-action="remove" title="刪除 User" aria-label="刪除 User ${index}">×</button>
+        </div>
+        <div class="panel-body">
+          <div class="field">
+            <label>User ID</label>
+            <input class="user-id-input" type="text" value="${userId}" />
+          </div>
+          <div class="btn-group">
+            <button class="btn-user" data-user-action="connect">連線</button>
+            <button data-user-action="disconnect" class="btn-danger">斷線</button>
+            <button data-user-action="login">Login</button>
+            <button data-user-action="join">Join Room</button>
+            <button data-user-action="leave">Leave Room</button>
+          </div>
+          <div class="field">
+            <label>Answer Option Index</label>
+            <input class="answer-input" type="number" value="0" min="0" />
+          </div>
+          <div class="btn-group">
+            <button data-user-action="submit">Submit Answer</button>
+            <button data-user-action="submit-random">Submit Random</button>
+          </div>
+          <div class="section-title">事件紀錄</div>
+          <div class="user-log log"></div>
+          <button data-user-action="clear-log">清除紀錄</button>
+        </div>
+      `;
+      return card;
+    }
+
+    function getUserRecord(card) {
+      const index = Number(card.dataset.userIndex);
+      return state.users.find((u) => u.index === index);
+    }
+
+    function addUser() {
+      const userId = claimNextUserName();
+      if (!userId) {
+        alert('可用中文名稱已用完，請先刪除部分 User 或擴充 name-list.json');
+        return;
+      }
+
+      const index = state.nextUserIndex++;
+      const card = createUserCard(index, userId);
+      $('usersContainer').appendChild(card);
+
+      const record = {
+        index,
+        card,
+        socket: null,
+        loggedIn: false,
+        inRoom: false,
+        logEl: card.querySelector('.user-log'),
+        statusEl: card.querySelector('.user-status'),
+      };
+      state.users.push(record);
+      bindUserCardEvents(card, record);
+    }
+
+    function removeUser(record) {
+      const userId = record.card.querySelector('.user-id-input')?.value?.trim();
+      releaseUserName(userId);
+      disconnectUser(record);
+      record.card.remove();
+      state.users = state.users.filter((u) => u.index !== record.index);
+
+      if (state.users.length === 0 && state.userAutoAnswer.active) {
+        stopUserAutoAnswer('User 自動答題：已無 User');
+      }
+    }
+
+    function bindUserCardEvents(card, record) {
+      card.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-user-action]');
+        if (!btn) return;
+        const action = btn.dataset.userAction;
+        const userId = card.querySelector('.user-id-input').value.trim();
+        const roomName = $('roomNameInput').value.trim();
+        const optionIndex = Number(card.querySelector('.answer-input').value);
+
+        switch (action) {
+          case 'remove':
+            removeUser(record);
+            break;
+          case 'connect':
+            connectUser(record);
+            break;
+          case 'disconnect':
+            disconnectUser(record);
+            break;
+          case 'login':
+            if (!record.socket?.connected) return;
+            emitEvent(record.socket, record.logEl, `User ${record.index}`, 'User:Login', { userId });
+            break;
+          case 'join':
+            if (!record.socket?.connected) return;
+            emitEvent(record.socket, record.logEl, `User ${record.index}`, 'UserGame:JoinRoom', { roomName });
+            break;
+          case 'leave':
+            if (!record.socket?.connected) return;
+            emitEvent(record.socket, record.logEl, `User ${record.index}`, 'UserGame:LeaveRoom');
+            break;
+          case 'submit':
+            if (!record.socket?.connected) return;
+            emitEvent(record.socket, record.logEl, `User ${record.index}`, 'UserGame:SubmitAnswer', { optionIndex });
+            break;
+          case 'submit-random':
+            if (!record.socket?.connected) return;
+            emitEvent(record.socket, record.logEl, `User ${record.index}`, 'UserGame:SubmitAnswer', {
+              optionIndex: Math.floor(Math.random() * 4),
+            });
+            break;
+          case 'clear-log':
+            record.logEl.innerHTML = '';
+            break;
+        }
+      });
+    }
+
+    function updateUserStatus(record, connected) {
+      record.statusEl.textContent = connected ? '已連線' : '未連線';
+      record.statusEl.className = `status-badge ${connected ? 'status-connected' : 'status-disconnected'} user-status`;
+    }
+
+    function connectUser(record) {
+      if (record.socket?.connected) {
+        appendLog(record.logEl, 'warn', `[User ${record.index}]`, 'info', { message: '已連線' });
+        return Promise.resolve();
+      }
+
+      const socket = createSocket('User');
+      record.socket = socket;
+      record.loggedIn = false;
+      record.inRoom = false;
+
+      bindSocketLogging(socket, record.logEl, `User ${record.index}`);
+
+      socket.on('User:Login', () => {
+        record.loggedIn = true;
+      });
+
+      socket.on('UserGame:JoinRoom', () => {
+        record.inRoom = true;
+      });
+
+      socket.on('UserGame:LeaveRoom', () => {
+        record.inRoom = false;
+      });
+
+      socket.on('QuizGame:Finished', () => {
+        record.inRoom = false;
+      });
+
+      socket.on('connect', () => updateUserStatus(record, true));
+      socket.on('disconnect', () => {
+        updateUserStatus(record, false);
+        record.loggedIn = false;
+        record.inRoom = false;
+      });
+
+      return waitForConnect(socket);
+    }
+
+    function disconnectUser(record) {
+      if (record.socket) {
+        record.socket.disconnect();
+        record.socket = null;
+      }
+      updateUserStatus(record, false);
+      record.loggedIn = false;
+      record.inRoom = false;
+    }
+
+    function submitRandomAnswer(user, optionsLength = 4) {
+      const length = Math.max(optionsLength, 1);
+      const optionIndex = Math.floor(Math.random() * length);
+      user.card.querySelector('.answer-input').value = String(optionIndex);
+      emitEvent(user.socket, user.logEl, `User ${user.index}`, 'UserGame:SubmitAnswer', { optionIndex });
+    }
+
+    function disconnectAll() {
+      stopAuto();
+      stopUserAutoAnswer();
+      if (state.managerSocket) {
+        state.managerSocket.disconnect();
+        state.managerSocket = null;
+      }
+      updateManagerStatus(false);
+      state.managerLoggedIn = false;
+      state.roomId = null;
+      state.users.forEach(disconnectUser);
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function getConnectedUsers() {
+      return state.users.filter((u) => u.socket?.connected);
+    }
+
+    function getRoomName() {
+      return $('roomNameInput').value.trim();
+    }
+
+    function getManagerId() {
+      return $('managerIdInput').value.trim();
+    }
+
+    async function runAutoFlow() {
+      if (state.auto.running) return;
+
+      const managerId = getManagerId();
+      const roomName = getRoomName();
+
+      if (!managerId || !roomName) {
+        alert('請填寫 Manager ID 與 Room Name');
+        return;
+      }
+
+      if (state.users.length === 0) {
+        alert('請至少新增 1 個 User');
+        return;
+      }
+
+      state.auto.running = true;
+      state.auto.paused = false;
+      state.auto.step = 'starting';
+      $('startAutoBtn').disabled = true;
+      $('stopAutoBtn').disabled = false;
+      setAutoStatus('自動流程：執行中…', 'running');
+      highlightNextQuestion(false);
+
+      try {
+        if (!state.managerSocket?.connected) {
+          await connectManager();
+        }
+
+        for (const user of state.users) {
+          if (!user.socket?.connected) {
+            appendLog($('managerLog'), 'info', '[Auto]', 'step', { message: `User ${user.index} 自動連線` });
+            await connectUser(user);
+          }
+        }
+
+        const users = state.users.filter((u) => u.socket?.connected);
+
+        appendLog($('managerLog'), 'info', '[Auto]', 'step', { message: 'Manager Login' });
+        emitEvent(state.managerSocket, $('managerLog'), 'Manager', 'Manager:Login', { managerId });
+        await sleep(300);
+
+        for (const user of users) {
+          const userId = user.card.querySelector('.user-id-input').value.trim();
+          appendLog($('managerLog'), 'info', '[Auto]', 'step', { message: `User ${user.index} Login`, userId });
+          emitEvent(user.socket, user.logEl, `User ${user.index}`, 'User:Login', { userId });
+          await sleep(200);
+        }
+
+        appendLog($('managerLog'), 'info', '[Auto]', 'step', { message: 'Create Room', roomName });
+        emitEvent(state.managerSocket, $('managerLog'), 'Manager', 'Room:CreateRoom', { roomName });
+        await sleep(300);
+
+        for (const user of users) {
+          appendLog($('managerLog'), 'info', '[Auto]', 'step', { message: `User ${user.index} Join Room` });
+          emitEvent(user.socket, user.logEl, `User ${user.index}`, 'UserGame:JoinRoom', { roomName });
+          await sleep(200);
+        }
+
+        appendLog($('managerLog'), 'info', '[Auto]', 'step', { message: 'Start Game' });
+        emitEvent(state.managerSocket, $('managerLog'), 'Manager', 'Room:StartGame', { roomName });
+        state.auto.step = 'in_game';
+        setAutoStatus('自動流程：進行中，等待題目與結算…', 'running');
+      } catch (err) {
+        stopAuto(`自動流程失敗：${err.message}`);
+      }
+    }
+
+    function stopAuto(message = '自動流程：已停止') {
+      state.auto.running = false;
+      state.auto.paused = false;
+      state.auto.step = 'idle';
+      $('startAutoBtn').disabled = false;
+      $('stopAutoBtn').disabled = true;
+      highlightNextQuestion(false);
+      setAutoStatus(message);
+    }
+
+    function handleAutoEvent(role, eventName, data) {
+      if (!state.auto.running) return;
+
+      if (eventName === 'QuizGame:Question') {
+        const users = getConnectedUsers().filter((u) => u.inRoom);
+        users.forEach((user, idx) => {
+          const optionIndex = idx % 4;
+          user.card.querySelector('.answer-input').value = String(optionIndex);
+          emitEvent(user.socket, user.logEl, `User ${user.index}`, 'UserGame:SubmitAnswer', { optionIndex });
+        });
+        setAutoStatus('自動流程：已送出答案，等待結算…', 'running');
+      }
+
+      if (eventName === 'QuizGame:AnswerReveal') {
+        state.auto.paused = true;
+        state.auto.step = 'waiting_next_question';
+        highlightNextQuestion(true);
+        setAutoStatus('自動流程：已暫停 — 請手動點擊 Next Question 繼續', 'paused');
+        appendLog($('managerLog'), 'warn', '[Auto]', 'pause', {
+          message: '收到 AnswerReveal，等待 Manager 手動 Next Question',
+        });
+      }
+
+      if (eventName === 'QuizGame:Finished') {
+        stopAuto('自動流程：遊戲結束');
+        appendLog($('managerLog'), 'info', '[Auto]', 'done', data);
+      }
+
+      if (eventName === 'error' || eventName.endsWith(':error')) {
+        appendLog($('managerLog'), 'error', '[Auto]', 'error', data);
+      }
+    }
+
+    function onManagerNextQuestion() {
+      highlightNextQuestion(false);
+
+      if (state.auto.paused) {
+        state.auto.paused = false;
+        state.auto.step = 'in_game';
+        setAutoStatus('自動流程：已繼續，等待下一題…', 'running');
+        appendLog($('managerLog'), 'info', '[Auto]', 'resume', {
+          message: 'Manager 已手動 Next Question，自動流程繼續',
+        });
+      }
+    }
+
+    async function runUserAutoAnswer() {
+      if (state.userAutoAnswer.active) return;
+
+      const roomName = getRoomName();
+      if (!roomName) {
+        alert('請填寫 Room Name');
+        return;
+      }
+
+      if (state.users.length === 0) {
+        alert('請至少新增 1 個 User');
+        return;
+      }
+
+      state.userAutoAnswer.active = true;
+      state.userAutoAnswer.step = 'connecting';
+      $('userAutoAnswerBtn').disabled = true;
+      $('stopUserAutoAnswerBtn').disabled = false;
+      setUserAutoAnswerStatus('User 自動答題：連線中…', 'running');
+
+      try {
+        for (const user of state.users) {
+          if (!user.socket?.connected) {
+            await connectUser(user);
+          }
+        }
+
+        state.userAutoAnswer.step = 'logging_in';
+        setUserAutoAnswerStatus('User 自動答題：Login 中…', 'running');
+
+        for (const user of state.users) {
+          if (!user.socket?.connected) continue;
+          if (user.loggedIn) continue;
+
+          const userId = user.card.querySelector('.user-id-input').value.trim();
+          if (!userId) {
+            throw new Error(`User ${user.index} 缺少 userId`);
+          }
+
+          emitEvent(user.socket, user.logEl, `User ${user.index}`, 'User:Login', { userId });
+          await sleep(200);
+        }
+
+        state.userAutoAnswer.step = 'joining';
+        setUserAutoAnswerStatus('User 自動答題：Join Room 中…', 'running');
+
+        for (const user of state.users) {
+          if (!user.socket?.connected) continue;
+          if (user.inRoom) continue;
+
+          emitEvent(user.socket, user.logEl, `User ${user.index}`, 'UserGame:JoinRoom', { roomName });
+          await sleep(200);
+        }
+
+        state.userAutoAnswer.step = 'waiting_game_start';
+        setUserAutoAnswerStatus('User 自動答題：已就位，等待 Manager 手動開始遊戲…', 'paused');
+      } catch (err) {
+        stopUserAutoAnswer(`User 自動答題失敗：${err.message}`);
+      }
+    }
+
+    function stopUserAutoAnswer(message = 'User 自動答題：已停止') {
+      state.userAutoAnswer.active = false;
+      state.userAutoAnswer.step = 'idle';
+      $('userAutoAnswerBtn').disabled = false;
+      $('stopUserAutoAnswerBtn').disabled = true;
+      setUserAutoAnswerStatus(message);
+    }
+
+    function handleUserAutoAnswerEvent(role, eventName, data) {
+      if (!state.userAutoAnswer.active) return;
+
+      const user = state.users.find((u) => `User ${u.index}` === role);
+      if (!user) return;
+
+      if (eventName === 'QuizGame:GameStarted') {
+        state.userAutoAnswer.step = 'answering';
+        setUserAutoAnswerStatus('User 自動答題：遊戲已開始，收到題目將自動隨機作答', 'running');
+      }
+
+      if (eventName === 'QuizGame:Question' && user.inRoom) {
+        const optionsLength = data?.options?.length ?? 4;
+        submitRandomAnswer(user, optionsLength);
+        setUserAutoAnswerStatus('User 自動答題：已自動送出答案，等待下一題…', 'running');
+      }
+
+      if (eventName === 'QuizGame:Finished') {
+        stopUserAutoAnswer('User 自動答題：遊戲結束');
+      }
+    }
+
+    document.querySelector('.manager-panel').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn || !state.managerSocket?.connected) return;
+
+      const action = btn.dataset.action;
+      const roomName = getRoomName();
+
+      switch (action) {
+        case 'manager-login':
+          emitEvent(state.managerSocket, $('managerLog'), 'Manager', 'Manager:Login', {
+            managerId: getManagerId(),
+          });
+          break;
+        case 'create-room':
+          emitEvent(state.managerSocket, $('managerLog'), 'Manager', 'Room:CreateRoom', { roomName });
+          break;
+        case 'start-game':
+          emitEvent(state.managerSocket, $('managerLog'), 'Manager', 'Room:StartGame', { roomName });
+          break;
+        case 'next-question':
+          emitEvent(state.managerSocket, $('managerLog'), 'Manager', 'Room:NextQuestion', { roomName });
+          onManagerNextQuestion();
+          break;
+        case 'clear-manager-log':
+          $('managerLog').innerHTML = '';
+          break;
+      }
+    });
+
+    $('connectManagerBtn').addEventListener('click', connectManager);
+    $('addUserBtn').addEventListener('click', addUser);
+    $('disconnectAllBtn').addEventListener('click', disconnectAll);
+    $('startAutoBtn').addEventListener('click', runAutoFlow);
+    $('stopAutoBtn').addEventListener('click', () => stopAuto());
+    $('userAutoAnswerBtn').addEventListener('click', runUserAutoAnswer);
+    $('stopUserAutoAnswerBtn').addEventListener('click', () => stopUserAutoAnswer());
+
+    ['hostInput', 'portInput'].forEach((id) => {
+      $(id).addEventListener('input', updateSocketPreview);
+    });
+
+    async function init() {
+      updateSocketPreview();
+      await loadNameList();
+
+      for (let i = 0; i < 2; i++) {
+        addUser();
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
