@@ -4,23 +4,11 @@ export enum RoomState {
   Finished = 'Finished',
 }
 
-export interface IRoomData {
+export interface IRoomSnapshot {
   roomId: string;
   managerId: string;
   roomName: string;
-  players: Set<string>;
-  state: RoomState;
-  createdAt: Date;
-}
-
-export interface IRoomBroadcastData {
-  userIds: string[]
-  msgEvent: string
-  msgData: any
-}
-
-export interface IRoomPrivateMsgData {
-  userId: string
-  msgEvent: string
-  msgData: any
+  players: string[];
+  roomState: RoomState;
+  gameState: string | null;
 }

@@ -8,11 +8,11 @@ export const StartSocketServer = async () => {
   try {
     const io = new Server({
       cors: {
-        origin: '*',
+        origin: process.env.CORS_ORIGIN ?? '*',
       },
       transports: ['websocket'],
-      maxHttpBufferSize: 10e8,
-    })
+      maxHttpBufferSize: 1e6,
+    });
 
     io.on('connection', OnConnection);
 
@@ -20,11 +20,10 @@ export const StartSocketServer = async () => {
     ServerIO = io;
 
     ModuleLogger('Socket Server', `Socket server is running on port ${SOCKET_PORT}`);
-
   } catch (error: any) {
     ModuleLogger('Socket Server', error);
   }
-}
+};
 
 const OnConnection = (socket: Socket) => {
   SocketSystemHandlers(socket);
@@ -32,6 +31,6 @@ const OnConnection = (socket: Socket) => {
   socket.on('disconnect', () => {
     ModuleLogger('Socket Server', `Client disconnected: ${socket.id}`);
   });
-}
+};
 
 export let ServerIO: Server | null = null;

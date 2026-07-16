@@ -1,13 +1,13 @@
 import { Socket } from 'socket.io';
 import { ManagerContext } from './ManagerContext';
+import { managerContextMap, unregisteredContextMap } from './ManagerContextStore';
 import { ModuleLogger } from '../../utils/log';
-import { roomManagerSocket } from '../systems/SocketSystem';
+import { roomManager } from '../room/RoomManager';
 
-export const unregisteredContextMap = new Map<string, ManagerContext>();
-export const managerContextMap = new Map<string, ManagerContext>();
+export { managerContextMap, unregisteredContextMap };
 
 export const ManagerContextCreation = (socket: Socket): void => {
-  const managerContext = new ManagerContext(socket);
+  const managerContext = new ManagerContext(socket, roomManager);
 
   unregisteredContextMap.set(socket.id, managerContext);
 
@@ -16,14 +16,12 @@ export const ManagerContextCreation = (socket: Socket): void => {
 
     if (managerContext.managerId) {
       managerContextMap.delete(managerContext.managerId);
-      if (roomManagerSocket) {
-        roomManagerSocket.DeleteRoomsByManager(managerContext.managerId);
-      }
+      managerContext.roomService.DeleteRoomsByManager(managerContext.managerId);
     }
 
     ModuleLogger('Socket Server', `Manager disconnected: ${managerContext.socket.id}`);
-  })
-}
+  });
+};
 
 export const ManagerContextRegister = (managerId: string, socketId: string): void => {
   const managerContext = unregisteredContextMap.get(socketId);
@@ -42,4 +40,4 @@ export const ManagerContextRegister = (managerId: string, socketId: string): voi
 
   managerContextMap.set(managerId, managerContext);
   unregisteredContextMap.delete(socketId);
-}
+};

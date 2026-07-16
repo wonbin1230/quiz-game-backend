@@ -38,7 +38,7 @@ export abstract class ControllerBase<T extends ContextBase> {
       ? event.slice(this.name.length + 1)
       : event;
 
-    this.context.socket.on(event, this.LockHandler(event, async (data) => {
+    this.context.socket.on(event, this.LockHandler(event, responseEvent, async (data) => {
       try {
         let payload: any = data;
         for (const middleware of middlewares) {
@@ -54,18 +54,22 @@ export abstract class ControllerBase<T extends ContextBase> {
     }));
   }
 
-  LockHandler = (event: string, handler: (...args: any[]) => Promise<void>): (...args: any[]) => Promise<void> => {
+  LockHandler = (
+    event: string,
+    responseEvent: string,
+    handler: (...args: any[]) => Promise<void>,
+  ): (...args: any[]) => Promise<void> => {
     return async (...args: any[]) => {
       try {
         EventLockAttemptProceed(this.context.socket.id, `${this.name}:${event}`);
         await this.eventLocks.acquire(event, async () => {
           await handler(...args);
-        })
+        });
       } catch (error: any) {
-        //
+        this.EmitFailResponse(responseEvent, error);
       } finally {
         EventLockSetUnlock(this.context.socket.id, `${this.name}:${event}`);
       }
-    }
+    };
   }
 }

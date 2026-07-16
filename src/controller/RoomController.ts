@@ -1,6 +1,5 @@
 import { ManagerContext } from '../socket/manager/ManagerContext';
 import { ControllerBase } from './ControllerBase';
-import { roomManagerSocket } from '../socket/systems/SocketSystem';
 import {
   requireManagerLogin,
   requireOwnedRoom,
@@ -32,11 +31,7 @@ export class RoomController extends ControllerBase<ManagerContext> {
   }
 
   OnCreateRoom = async (data: WithRoomName) => {
-    const room = await roomManagerSocket!.CreateRoomSocket(this.context.managerId, data.roomName);
-
-    if (!room) {
-      throw new Error('Failed to create room. Please try again.');
-    }
+    const room = this.context.roomService.CreateRoom(this.context.managerId, data.roomName);
 
     this.context.socket.join(room.roomId);
 
@@ -56,6 +51,10 @@ export class RoomController extends ControllerBase<ManagerContext> {
   OnNextQuestion = async (data: WithOwnedRoom) => {
     data.room.NextQuestion();
 
-    this.EmitSuccessResponse('NextQuestion', { success: true });
+    this.EmitSuccessResponse('NextQuestion', {
+      roomId: data.room.roomId,
+      roomState: data.room.roomState,
+      gameState: data.room.game?.state ?? null,
+    });
   }
 }

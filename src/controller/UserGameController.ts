@@ -1,7 +1,6 @@
 import { UserContext } from '../socket/user/UserContext';
+import { AppError, SocketErrorCode } from '../types/error';
 import { ControllerBase } from './ControllerBase';
-import { roomManagerSocket } from '../socket/systems/SocketSystem';
-import { ServerIO } from '../socket/app';
 
 export class UserGameController extends ControllerBase<UserContext> {
   roomName: string | null = null;
@@ -13,99 +12,88 @@ export class UserGameController extends ControllerBase<UserContext> {
 
   override EventRegisters(): void {
     this.EventRegister('UserGame:JoinRoom', this.OnJoinRoom);
-    // this.EventRegister('UserGame:LeaveRoom', this.OnLeaveRoom);
-    // this.EventRegister('UserGame:SubmitAnswer', this.OnSubmitAnswer);
+    this.EventRegister('UserGame:LeaveRoom', this.OnLeaveRoom);
+    this.EventRegister('UserGame:SubmitAnswer', this.OnSubmitAnswer);
   }
 
   OnJoinRoom = async (data: { roomName: string }) => {
-    try {
-      if (!this.context.userId) {
-        throw new Error('User must be logged in before joining a room.');
-      }
-
-      if (this.roomId) {
-        throw new Error('User is already in a room. Please leave the current room before joining another.');
-      }
-
-      if (!data?.roomName || typeof data.roomName !== 'string') {
-        throw new Error('roomName is required and must be a string.');
-      }
-
-      const room = roomManagerSocket!.GetRoomSocket(data.roomName);
-      if (!room) {
-        throw new Error('Room not found.');
-      }
-
-      ServerIO!.to(room.roomId).emit('GameRoom:UserJoin', { userId: this.context.userId });
-
-      this.roomName = room.roomName;
-      this.roomId = room.roomId;
-      this.context.socket.join(room.roomId);
-
-      this.context.socket.emit('GameRoom:UserJoin', { userId: this.context.userId });
-
-      this.EmitSuccessResponse('JoinRoom', { roomId: room.roomId });
-    } catch (error: any) {
-      this.EmitFailResponse('JoinRoom', error);
+    if (!this.context.userId) {
+      throw new AppError('User must be logged in before joining a room.', SocketErrorCode.UNAUTHORIZED);
     }
+
+    if (this.roomId) {
+      throw new AppError(
+        'User is already in a room. Please leave the current room before joining another.',
+        SocketErrorCode.CONFLICT,
+      );
+    }
+
+    if (!data?.roomName || typeof data.roomName !== 'string') {
+      throw new AppError('roomName is required and must be a string.', SocketErrorCode.VALIDATION);
+    }
+
+    const room = this.context.roomService.GetRoom(data.roomName);
+    if (!room) {
+      throw new AppError('Room not found.', SocketErrorCode.NOT_FOUND);
+    }
+
+    room.JoinUser(this.context.userId);
+
+    this.roomName = room.roomName;
+    this.roomId = room.roomId;
+    this.context.socket.join(room.roomId);
+
+    this.EmitSuccessResponse('JoinRoom', { roomId: room.roomId });
   }
 
-  // OnLeaveRoom = async () => {
-  //   try {
-  //     if (!this.roomId || !this.roomName) {
-  //       throw new Error('User is not in a room.');
-  //     }
+  OnLeaveRoom = async () => {
+    if (!this.roomId || !this.roomName || !this.context.userId) {
+      throw new AppError('User is not in a room.', SocketErrorCode.INVALID_STATE);
+    }
 
-  //     const room = roomManager!.GetRoom(this.roomName);
-  //     if (!room) {
-  //       throw new Error('Room not found.');
-  //     }
+    const room = this.context.roomService.GetRoom(this.roomName);
+    if (!room) {
+      throw new AppError('Room not found.', SocketErrorCode.NOT_FOUND);
+    }
 
-  //     roomManager!.RemovePlayer(room.roomName, this.context.userId);
+    room.LeaveUser(this.context.userId);
+    this.context.socket.leave(this.roomId);
 
-  //     this.context.socket.leave(this.roomId);
-  //     this.roomName = null;
-  //     this.roomId = null;
+    this.roomName = null;
+    this.roomId = null;
 
-  //     this.EmitSuccessResponse('LeaveRoom', { roomName: room.roomName });
-  //   } catch (error: any) {
-  //     this.EmitFailResponse('LeaveRoom', error);
-  //   }
-  // }
+    this.EmitSuccessResponse('LeaveRoom', { success: true });
+  }
 
-  // OnSubmitAnswer = async (data: { optionIndex: number }) => {
-  //   try {
-  //     if (!this.context.userId) {
-  //       throw new Error('User must be logged in before submitting an answer.');
-  //     }
+  OnSubmitAnswer = async (data: { optionIndex: number }) => {
+    if (!this.context.userId) {
+      throw new AppError('User must be logged in before submitting an answer.', SocketErrorCode.UNAUTHORIZED);
+    }
 
-  //     if (!this.roomId || !this.roomName) {
-  //       throw new Error('User must join a room before submitting an answer.');
-  //     }
+    if (!this.roomId || !this.roomName) {
+      throw new AppError('User must join a room before submitting an answer.', SocketErrorCode.INVALID_STATE);
+    }
 
-  //     if (typeof data?.optionIndex !== 'number') {
-  //       throw new Error('optionIndex is required and must be a number.');
-  //     }
+    if (typeof data?.optionIndex !== 'number') {
+      throw new AppError('optionIndex is required and must be a number.', SocketErrorCode.VALIDATION);
+    }
 
-  //     const room = roomManager!.GetRoom(this.roomName);
-  //     if (!room) {
-  //       throw new Error('Room not found.');
-  //     }
+    const room = this.context.roomService.GetRoom(this.roomName);
+    if (!room?.game) {
+      throw new AppError('Game not found for this room.', SocketErrorCode.NOT_FOUND);
+    }
 
-  //     const game = roomManager!.GetGame(room.roomId);
-  //     if (!game) {
-  //       throw new Error('Game not found for this room.');
-  //     }
+    room.game.SubmitAnswer(this.context.userId, data.optionIndex);
 
-  //     // game.SubmitAnswer(this.context.userId, data.optionIndex);
+    this.EmitSuccessResponse('SubmitAnswer', {
+      roomId: this.roomId,
+      questionIndex: room.game.currentQuizIndex + 1,
+      selectedOption: data.optionIndex,
+    });
+  }
 
-  //     this.EmitSuccessResponse('SubmitAnswer', {
-  //       roomId: this.roomId,
-  //       questionIndex: game.currentQuizIndex + 1,
-  //       selectedOption: data.optionIndex,
-  //     });
-  //   } catch (error: any) {
-  //     this.EmitFailResponse('SubmitAnswer', error);
-  //   }
-  // }
+  ClearRoomState = () => {
+    this.roomName = null;
+    this.roomId = null;
+  }
 }

@@ -1,12 +1,13 @@
 import { Socket } from 'socket.io';
 import { UserContext } from './UserContext';
+import { userContextMap, unregisteredContextMap } from './UserContextStore';
+import { roomManager } from '../room/RoomManager';
 import { ModuleLogger } from '../../utils/log';
 
-export const unregisteredContextMap = new Map<string, UserContext>();
-export const userContextMap = new Map<string, UserContext>();
+export { userContextMap, unregisteredContextMap };
 
 export const UserContextCreation = (socket: Socket): void => {
-  const userContext = new UserContext(socket);
+  const userContext = new UserContext(socket, roomManager);
 
   unregisteredContextMap.set(socket.id, userContext);
 
@@ -14,12 +15,22 @@ export const UserContextCreation = (socket: Socket): void => {
     unregisteredContextMap.delete(socket.id);
 
     if (userContext.userId) {
+      const gameController = userContext.userGameController;
+      if (gameController?.roomName && gameController.roomId) {
+        const room = userContext.roomService.GetRoom(gameController.roomName);
+        if (room) {
+          room.LeaveUser(userContext.userId);
+          userContext.socket.leave(gameController.roomId);
+        }
+        gameController.ClearRoomState();
+      }
+
       userContextMap.delete(userContext.userId);
     }
 
     ModuleLogger('Socket Server', `Player disconnected: ${userContext.socket.id}`);
-  })
-}
+  });
+};
 
 export const UserContextRegister = (userId: string, socketId: string): void => {
   const userContext = unregisteredContextMap.get(socketId);
@@ -38,4 +49,4 @@ export const UserContextRegister = (userId: string, socketId: string): void => {
 
   userContextMap.set(userId, userContext);
   unregisteredContextMap.delete(socketId);
-}
+};

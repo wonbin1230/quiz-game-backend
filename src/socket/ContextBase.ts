@@ -1,6 +1,7 @@
 import { Socket } from 'socket.io';
 
 import { SocketSystem } from '../types/socket';
+import { SocketErrorPayload } from '../types/error';
 import { ModuleLogger } from '../utils/log';
 
 export abstract class ContextBase {
@@ -19,7 +20,14 @@ export abstract class ContextBase {
   }
 
   EmitFailResponse = (event: string, error: any) => {
-    this.socket.emit('error', error?.message ?? error);
-    ModuleLogger(this.system, `Error in event ${event}: ${error}`, true);
+    const payload: SocketErrorPayload = {
+      event,
+      message: error?.message ?? String(error),
+      code: error?.code,
+    };
+
+    this.socket.emit('error', payload);
+    this.socket.emit(`${event}:error`, payload);
+    ModuleLogger(this.system, `Error in event ${event}: ${payload.message}`, true);
   }
 }
