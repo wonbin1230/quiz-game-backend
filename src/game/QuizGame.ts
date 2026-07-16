@@ -4,8 +4,9 @@ import { AppError, SocketErrorCode } from '../types/error';
 import { quizList } from '../data/quiz';
 
 export class QuizGame {
-  private readonly VOTING_TIME = 12;
   private readonly PREPARE_TIME = 3;
+  private readonly VOTING_TIME = 12;
+  private readonly SETTLE_TIME = 3;
 
   room: QuizGameRoom;
   roomId: string;
@@ -117,11 +118,11 @@ export class QuizGame {
 
     this.ClearCurrentQuestionTimeout();
     this.currentQuestionTimeout = setTimeout(() => {
-      this.EndVoting();
+      this.Settle();
     }, this.VOTING_TIME * 1000);
   }
 
-  private EndVoting() {
+  private Settle() {
     if (this.state !== GameState.Voting) {
       return;
     }
@@ -141,7 +142,9 @@ export class QuizGame {
       answers: answerSummary,
     });
 
-    this.ShowAnswer();
+    this.currentQuestionTimeout = setTimeout(() => {
+      this.ShowAnswer(); 
+    }, this.SETTLE_TIME * 1000);
   }
 
   private ShowAnswer() {
