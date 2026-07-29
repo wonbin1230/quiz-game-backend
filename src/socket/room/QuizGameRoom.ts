@@ -44,6 +44,13 @@ export class QuizGameRoom {
     this.game.NextQuestion();
   }
 
+  public FinishGame = () => {
+    if (!this.game) {
+      throw new AppError('Game instance is not initialized.', SocketErrorCode.INVALID_STATE);
+    }
+    this.game.FinishGame();
+  }
+
   public JoinUser = (userId: string) => {
     if (this.roomState !== RoomState.Prepare) {
       throw new AppError('Room is already in progress or finished.', SocketErrorCode.INVALID_STATE);
@@ -88,6 +95,14 @@ export class QuizGameRoom {
       }
       userContext.EmitSuccessResponse(event, data);
     }
+  }
+
+  public EmitToUser = (userId: string, event: string, data: any) => {
+    const userContext = userContextMap.get(userId);
+    if (!userContext) {
+      return;
+    }
+    userContext.EmitSuccessResponse(event, data);
   }
 
   public NotifyManager = (event: string, data: any) => {

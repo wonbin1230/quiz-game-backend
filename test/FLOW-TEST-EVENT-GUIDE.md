@@ -22,7 +22,12 @@
 - 連線設定：頂部可改 **Host**、**Port**、**Room Name**、**Manager ID**
 - 測試模式：
   - **手動**：各面板獨立按鈕觸發 event
-  - **自動**：一鍵跑 Login → Create → Join → Start → 自動答題；`AnswerReveal` 後暫停，需手動按 **Next Question**
+  - **自動流程**：一鍵跑 Login → Create → Join → Start → 自動答題；`AnswerReveal` 後暫停，需手動按 **Next Question**
+  - **User 自動答題**：各 User 自行連線 / Login / Join，等 Manager 手動開局後自動作答
+  - **延遲答題（自動流程 & User 自動答題）**：
+    - 收到 `QuizGame:Question` 後，每個 User **各自**隨機延遲 **1~10 秒（含小數）** 再送 `UserGame:SubmitAnswer`
+    - 若延遲期間進入 `AnswerReveal` / `NextQuestion` / 遊戲結束，或手動停止流程，會**取消**尚未送出的答案
+    - 手動按 Submit / Submit Random **不套用**延遲
 
 ### 連線規則
 
@@ -176,8 +181,16 @@ UI：Manager 和 User 的 log 都要顯示，不加按鈕
 ### 自動流程慣例
 
 - 預設自動跑：Login → Create → Join → Start → 收到 `QuizGame:Question` 後自動答題
+- 自動答題會為每個 User 排程**獨立**隨機延遲（1~10 秒，含小數）再送出答案
+- 收到 `QuizGame:AnswerReveal` / `QuizGame:NextQuestion` 時取消尚未送出的延遲答題
 - 收到 `QuizGame:AnswerReveal` 後**暫停**，等待手動按 **Next Question**
-- 收到 `QuizGame:Finished` 後停止自動流程
+- 收到 `QuizGame:Finished` 或按停止後，取消未送出答案並停止自動流程
+
+### User 自動答題慣例
+
+- 各 User 各自完成連線 / Login / Join，等待 Manager 手動 `StartGame`
+- 收到 `QuizGame:Question` 後同樣以獨立隨機延遲（1~10 秒）送出隨機答案
+- `AnswerReveal` / `NextQuestion` / 結束 / 停止時取消尚未送出的答案
 
 新增 event 若會改變此節奏，請在需求中明確說明。
 

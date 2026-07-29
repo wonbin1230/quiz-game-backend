@@ -28,6 +28,11 @@ export class RoomController extends ControllerBase<ManagerContext> {
       requireRoomName,
       requireOwnedRoom,
     ]);
+    this.EventRegister('Room:FinishGame', this.OnFinishGame, [
+      requireManagerLogin,
+      requireRoomName,
+      requireOwnedRoom,
+    ]);
   }
 
   OnCreateRoom = async (data: WithRoomName) => {
@@ -52,6 +57,16 @@ export class RoomController extends ControllerBase<ManagerContext> {
     data.room.NextQuestion();
 
     this.EmitSuccessResponse('NextQuestion', {
+      roomId: data.room.roomId,
+      roomState: data.room.roomState,
+      gameState: data.room.game?.state ?? null,
+    });
+  }
+
+  OnFinishGame = async (data: WithOwnedRoom) => {
+    data.room.FinishGame();
+
+    this.EmitSuccessResponse('FinishGame', {
       roomId: data.room.roomId,
       roomState: data.room.roomState,
       gameState: data.room.game?.state ?? null,

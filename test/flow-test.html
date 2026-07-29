@@ -341,7 +341,7 @@
           <button id="startAutoBtn" class="btn-auto">一鍵自動流程</button>
           <button id="stopAutoBtn" class="btn-danger" disabled>停止自動</button>
         </div>
-        <p class="hint">自動流程會跑 Login → Create → Join → Start → 自動答題；到 <code>AnswerReveal</code> 後會暫停，請手動按 <strong>Next Question</strong> 繼續。</p>
+        <p class="hint">自動流程會跑 Login → Create → Join → Start → 自動答題（各 User 獨立隨機延遲 1~10 秒）；到 <code>AnswerReveal</code> 後會暫停並取消未送出的答案，請手動按 <strong>Next Question</strong> 繼續。</p>
 
         <div class="section-title">事件紀錄</div>
         <div id="managerLog" class="log"></div>
@@ -690,6 +690,7 @@
         socket: null,
         loggedIn: false,
         inRoom: false,
+        pendingAnswerTimeout: null,
         logEl: card.querySelector('.user-log'),
         statusEl: card.querySelector('.user-status'),
       };
@@ -867,6 +868,7 @@
     }
 
     function disconnectUser(record) {
+      clearPendingAnswer(record, 'User 已斷線，取消未送出的答案');
       if (record.socket) {
         record.socket.disconnect();
         record.socket = null;
@@ -874,6 +876,40 @@
       updateUserStatus(record, false);
       record.loggedIn = false;
       record.inRoom = false;
+    }
+
+    function randomAnswerDelayMs() {
+      return (1 + Math.random() * 9) * 1000;
+    }
+
+    function clearPendingAnswer(user, reason = null) {
+      if (user.pendingAnswerTimeout == null) return;
+      clearTimeout(user.pendingAnswerTimeout);
+      user.pendingAnswerTimeout = null;
+      if (reason) {
+        appendLog(user.logEl, 'warn', `[User ${user.index}]`, 'answer-cancelled', { message: reason });
+      }
+    }
+
+    function clearAllPendingAnswers(reason = null) {
+      state.users.forEach((user) => clearPendingAnswer(user, reason));
+    }
+
+    function scheduleDelayedAnswer(user, submitFn, meta = {}) {
+      clearPendingAnswer(user);
+      const delayMs = randomAnswerDelayMs();
+      const delaySec = Number((delayMs / 1000).toFixed(2));
+      appendLog(user.logEl, 'info', `[User ${user.index}]`, 'answer-delay', {
+        message: `將於 ${delaySec} 秒後送出答案`,
+        delaySec,
+        ...meta,
+      });
+      user.pendingAnswerTimeout = setTimeout(() => {
+        user.pendingAnswerTimeout = null;
+        if (!state.users.includes(user) || !user.socket?.connected) return;
+        submitFn();
+      }, delayMs);
+      return delaySec;
     }
 
     function submitRandomAnswer(user, optionsLength = 4) {
@@ -981,6 +1017,7 @@
     }
 
     function stopAuto(message = '自動流程：已停止') {
+      clearAllPendingAnswers('自動流程已停止，取消未送出的答案');
       state.auto.running = false;
       state.auto.paused = false;
       state.auto.step = 'idle';
@@ -993,17 +1030,23 @@
     function handleAutoEvent(role, eventName, data) {
       if (!state.auto.running) return;
 
-      if (eventName === 'QuizGame:Question') {
+      // 只由 Manager 端觸發，避免每個 User socket 重複排程
+      if (eventName === 'QuizGame:Question' && role === 'Manager') {
         const users = getConnectedUsers().filter((u) => u.inRoom);
         users.forEach((user, idx) => {
           const optionIndex = idx % 4;
           user.card.querySelector('.answer-input').value = String(optionIndex);
-          emitEvent(user.socket, user.logEl, `User ${user.index}`, 'UserGame:SubmitAnswer', { optionIndex });
+          scheduleDelayedAnswer(user, () => {
+            if (!state.auto.running || state.auto.paused) return;
+            if (!user.socket?.connected || !user.inRoom) return;
+            emitEvent(user.socket, user.logEl, `User ${user.index}`, 'UserGame:SubmitAnswer', { optionIndex });
+          }, { mode: 'auto-flow', optionIndex });
         });
-        setAutoStatus('自動流程：已送出答案，等待結算…', 'running');
+        setAutoStatus('自動流程：已排程延遲答題（各 User 獨立 1~10 秒）…', 'running');
       }
 
-      if (eventName === 'QuizGame:AnswerReveal') {
+      if (eventName === 'QuizGame:AnswerReveal' && role === 'Manager') {
+        clearAllPendingAnswers('已進入 AnswerReveal，取消未送出的答案');
         state.auto.paused = true;
         state.auto.step = 'waiting_next_question';
         highlightNextQuestion(true);
@@ -1011,6 +1054,10 @@
         appendLog($('managerLog'), 'warn', '[Auto]', 'pause', {
           message: '收到 AnswerReveal，等待 Manager 手動 Next Question',
         });
+      }
+
+      if (eventName === 'QuizGame:NextQuestion' && role === 'Manager') {
+        clearAllPendingAnswers('已進入下一題，取消未送出的答案');
       }
 
       if (eventName === 'QuizGame:Finished') {
@@ -1147,6 +1194,7 @@
     }
 
     function stopUserAutoAnswer(message = 'User 自動答題：已停止') {
+      clearAllPendingAnswers('User 自動答題已停止，取消未送出的答案');
       state.userAutoAnswer.active = false;
       state.userAutoAnswer.step = 'idle';
       $('userAutoAnswerBtn').disabled = false;
@@ -1162,13 +1210,22 @@
 
       if (eventName === 'QuizGame:GameStarted') {
         state.userAutoAnswer.step = 'answering';
-        setUserAutoAnswerStatus('User 自動答題：遊戲已開始，收到題目將自動隨機作答', 'running');
+        setUserAutoAnswerStatus('User 自動答題：遊戲已開始，收到題目將以獨立隨機延遲（1~10 秒）作答', 'running');
       }
 
       if (eventName === 'QuizGame:Question' && user.inRoom) {
         const optionsLength = data?.options?.length ?? 4;
-        submitRandomAnswer(user, optionsLength);
-        setUserAutoAnswerStatus('User 自動答題：已自動送出答案，等待下一題…', 'running');
+        scheduleDelayedAnswer(user, () => {
+          if (!state.userAutoAnswer.active) return;
+          if (!user.socket?.connected || !user.inRoom) return;
+          submitRandomAnswer(user, optionsLength);
+          setUserAutoAnswerStatus('User 自動答題：已自動送出答案，等待下一題…', 'running');
+        }, { mode: 'user-auto-answer' });
+        setUserAutoAnswerStatus('User 自動答題：已排程延遲答題（各 User 獨立 1~10 秒）…', 'running');
+      }
+
+      if (eventName === 'QuizGame:AnswerReveal' || eventName === 'QuizGame:NextQuestion') {
+        clearPendingAnswer(user, '題目階段已結束，取消未送出的答案');
       }
 
       if (eventName === 'QuizGame:Finished') {

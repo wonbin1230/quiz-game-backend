@@ -6,7 +6,21 @@ export enum GameState {
   Voting = 'Voting',
   Settle = 'Settle',
   ShowAnswer = 'ShowAnswer',
+  ShowRanking = 'ShowRanking',
   Finished = 'Finished',
+}
+
+export interface IPlayerStats {
+  correctCount: number;
+  totalTimeMs: number;
+}
+
+export interface IRankingEntry {
+  userId: string;
+  rank: number;
+  correctCount: number;
+  /** 總答題時長（秒），精確到小數點後 2 位 */
+  totalTime: number;
 }
 
 export function toRoomState(gameState: GameState): RoomState {
