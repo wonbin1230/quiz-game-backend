@@ -1,0 +1,3 @@
+[submodule "quiz-game-submodule"]
+	path = quiz-game-submodule
+	url = git@github.com:wonbin1230/quiz-game-submodule.git
