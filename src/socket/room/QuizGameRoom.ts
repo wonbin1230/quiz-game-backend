@@ -84,6 +84,26 @@ export class QuizGameRoom {
     this.NotifyManager('Room:UserJoined', this.BuildUserPresencePayload(userId));
   }
 
+  public RenameUser = (oldUserId: string, newUserId: string, socketId: string) => {
+    if (this.roomState !== RoomState.Prepare) {
+      throw new AppError('Cannot change name after the game has started.', SocketErrorCode.INVALID_STATE);
+    }
+
+    if (!this.players.has(oldUserId)) {
+      throw new AppError('User is not in this room.', SocketErrorCode.INVALID_STATE);
+    }
+
+    if (this.players.has(newUserId)) {
+      throw new AppError(
+        'This userId is already in use (duplicate name).',
+        SocketErrorCode.CONFLICT,
+      );
+    }
+
+    this.LeaveUser(oldUserId);
+    this.JoinUser(newUserId, socketId);
+  }
+
   public LeaveUser = (userId: string) => {
     if (!this.players.has(userId)) {
       return;

@@ -57,3 +57,22 @@ export const UserContextRegister = (userId: string, socketId: string): void => {
   userContextMap.set(userId, userContext);
   unregisteredContextMap.delete(socketId);
 };
+
+export const UserContextRename = (oldUserId: string, newUserId: string, userContext: UserContext): void => {
+  const mapped = userContextMap.get(oldUserId);
+  if (mapped !== userContext) {
+    throw new AppError('User is not registered with the expected id.', SocketErrorCode.INVALID_STATE);
+  }
+
+  const existing = userContextMap.get(newUserId);
+  if (existing && existing !== userContext) {
+    throw new AppError(
+      'This userId is already in use (duplicate name).',
+      SocketErrorCode.CONFLICT,
+    );
+  }
+
+  userContextMap.delete(oldUserId);
+  userContext.userId = newUserId;
+  userContextMap.set(newUserId, userContext);
+};
