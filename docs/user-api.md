@@ -47,11 +47,14 @@ ws://localhost:3000
 | 連線成功後（尚未 Login） | 僅 `User:Login` |
 | `User:Login` 成功後 | `UserGame:JoinRoom`、`UserGame:LeaveRoom`、`UserGame:SubmitAnswer` |
 
-> Login 成功後才會註冊 UserGame 相關 listener。若尚未 Login 就 emit UserGame event，伺服器不會處理（無 listener）。
+> Login 成功後才會註冊 UserGame 相關 listener。若尚未 Login 就 emit UserGame event，伺服器不會處理（無 listener）。  
+> 每次 `User:Login` 成功後，server 會**立刻再推** `UserGame:SessionSnapshot`（在房／不在房都推）。Client 應先處理 Login，再依 snapshot 還原畫面。
 
 ### 1.3 同一 userId 重複登入
 
-若另一個連線以相同 `userId` 登入成功，**舊連線會被強制 disconnect**。
+`userId` 在整個 User 系統中必須唯一。若另一個**仍在線**的連線已使用相同 `userId`，新的 `User:Login` 會失敗（`CONFLICT`，duplicate name），**不會**踢掉舊連線。
+
+斷線寬限（60 秒）內的同一 `userId` 再 Login，視為重連綁回，不是重複名稱。
 
 ---
 
@@ -177,7 +180,9 @@ User 在流程中的主動操作點：
 ```text
 連線（一般 User）
   → User:Login
-  → UserGame:JoinRoom
+  → 依 UserGame:SessionSnapshot：
+      inRoom: false → UserGame:JoinRoom（僅 Prepare）
+      inRoom: true  → 依 gameState 還原畫面（不要再 JoinRoom）
   → 監聽 QuizGame:GameStarted
   → 監聽 QuizGame:Question
   →（Voting 期間）UserGame:SubmitAnswer
@@ -187,6 +192,8 @@ User 在流程中的主動操作點：
   → 監聽 QuizGame:Finished
   →（可選）UserGame:LeaveRoom
 ```
+
+短暫斷線或重整後：重新連線 → `User:Login`（同一 `userId`）→ 等 `SessionSnapshot`。**不要**自動 `JoinRoom`。
 
 同時建議監聽：
 
@@ -213,15 +220,18 @@ User 在流程中的主動操作點：
 { userId: string }
 ```
 
+成功後 server **立刻**再對該 socket emit `UserGame:SessionSnapshot`（見 [6.12](#612-usergamesessionsnapshot)）。
+
 **可能錯誤**
 
 | code | 情況 |
 |------|------|
 | `VALIDATION` | `userId` 缺失或非字串 |
-| `CONFLICT` | 此連線已用**不同** `userId` 登入過 |
+| `CONFLICT` | 此連線已用**不同** `userId` 登入過；或該 `userId` 已被**其他在線連線**使用（duplicate name） |
 | `LOCKED` | 重複觸發尚未完成 |
 
-> 以相同 `userId` 再次 Login（例如重連後）是允許的，會回成功。
+> 同一 socket 以相同 `userId` 再次 Login 是允許的，會回成功並再推 snapshot。  
+> 斷線後以相同 `userId` 從**新 socket** Login：若仍在房間寬限內 → 綁回原房並推完整 snapshot；若該名稱已被其他在線玩家使用 → `CONFLICT`。
 
 ---
 
@@ -232,7 +242,7 @@ User 在流程中的主動操作點：
 | 項目 | 內容 |
 |------|------|
 | 方向 | Client → Server |
-| 前置條件 | 已 `User:Login`；目前不在任何房間；房間存在且 `roomState === Prepare` |
+| 前置條件 | 已 `User:Login`；目前不在任何房間（含斷線寬限中）；房間存在且 `roomState === Prepare` |
 | Request | `{ roomName: string }` |
 
 **成功回應 event：** `UserGame:JoinRoom`
@@ -251,7 +261,7 @@ User 在流程中的主動操作點：
 | code | 情況 |
 |------|------|
 | `UNAUTHORIZED` | 尚未 Login |
-| `CONFLICT` | 已在其他房間，或已在此房間 |
+| `CONFLICT` | 已在此房間或已在其他房間（含斷線寬限中；重連應走 Login 綁回，不要再 JoinRoom） |
 | `VALIDATION` | `roomName` 缺失／非字串，或 `userId` 無效 |
 | `NOT_FOUND` | 房間不存在 |
 | `INVALID_STATE` | 房間已在進行中或已結束（不可加入） |
@@ -363,13 +373,14 @@ User 在流程中的主動操作點：
 {
   roomId: string;
   quizCount: number; // 本場總題數
+  phaseEndsAt: number; // Unix ms，第一題開始時間
 }
 ```
 
 | 項目 | 內容 |
 |------|------|
 | 觸發時機 | Manager 成功 `Room:StartGame` 後立即 |
-| 之後 | 約 3 秒自動收到 `QuizGame:Question` |
+| 之後 | 約 3 秒自動收到 `QuizGame:Question`（以 `phaseEndsAt` 為準，不要用剩餘秒數當權威） |
 | User 動作 | 進入等待第一題 UI |
 
 ---
@@ -386,6 +397,7 @@ User 在流程中的主動操作點：
   questionIndex: number;  // 1-based
   totalQuestions: number;
   votingTime: number;     // 秒，目前固定 12
+  phaseEndsAt: number;    // Unix ms，投票截止時間
 }
 ```
 
@@ -393,7 +405,7 @@ User 在流程中的主動操作點：
 |------|------|
 | 遊戲狀態 | 進入 `Voting` |
 | 注意 | **不會**帶正確答案 |
-| User 動作 | 在 `votingTime` 內呼叫 `UserGame:SubmitAnswer` |
+| User 動作 | 在 `phaseEndsAt` 前呼叫 `UserGame:SubmitAnswer` |
 | 之後 | 時間到自動 `QuizGame:Settle` |
 
 ---
@@ -412,6 +424,7 @@ User 在流程中的主動操作點：
     optionIndex: number;
     isCorrect: boolean;
   }>;
+  phaseEndsAt: number; // Unix ms，進入 AnswerReveal 的時間
 }
 ```
 
@@ -420,7 +433,7 @@ User 在流程中的主動操作點：
 | 遊戲狀態 | 進入 `Settle` |
 | `answers` | 僅包含有提交答案的玩家；未作答者不在陣列中 |
 | User 動作 | 可顯示自己／全場作答結果；此時不可再答題 |
-| 之後 | 約 3 秒自動 `QuizGame:AnswerReveal` |
+| 之後 | 約 3 秒自動 `QuizGame:AnswerReveal`（以 `phaseEndsAt` 為準） |
 
 ---
 
@@ -520,11 +533,83 @@ User 在流程中的主動操作點：
 | 觸發時機 | **Manager 斷線**導致其擁有房間被刪除 |
 | User 動作 | 清除入房／遊戲 UI；必要時提示房間已關閉 |
 
-> 伺服器同時會清掉該 User 端的房間狀態並 `leave(roomId)`。
+> 伺服器同時會清掉該 User 端的房間狀態並 `leave(roomId)`。離線中（寬限內）的玩家沒有活 socket，收不到此 event；之後 Login 會得到 `inRoom: false`。
 
 ---
 
-### 6.13 `error` / `{event}:error`
+### 6.13 `UserGame:SessionSnapshot`
+
+每次 `User:Login` 成功後必推，且一定在 `User:Login` **之後**。用來還原目前是否在房、遊戲階段、倒數截止時間與自己的作答。
+
+時間欄位一律為 Unix timestamp（毫秒）。剩餘秒數請用 `phaseEndsAt - Date.now()` 自行計算。
+
+**不在房：**
+
+```ts
+{ inRoom: false }
+```
+
+**在房：**
+
+```ts
+{
+  inRoom: true;
+  roomId: string;
+  roomName: string;
+  roomState: 'Prepare' | 'InGame' | 'Finished';
+  gameState: 'Prepare' | 'StartGame' | 'Voting' | 'Settle' | 'ShowAnswer' | 'ShowRanking' | 'Finished';
+  quizCount: number; // 尚未開局時為 0
+  phaseEndsAt?: number; // 有倒數的階段必填
+  question?: {
+    questionIndex: number;   // 1-based
+    question: string;
+    options: string[];
+    votingTime: number;
+    totalQuestions: number;
+  };
+  myAnswer?: {
+    questionIndex: number;
+    selectedOption: number;  // 0-based
+  };
+  settle?: {
+    questionIndex: number;
+    correctAnswer: number;
+    answers: Array<{
+      userId: string;
+      optionIndex: number;
+      isCorrect: boolean;
+    }>;
+  };
+  answerReveal?: {
+    questionIndex: number;
+    correctAnswer: number;
+    totalAnswers: number;
+  };
+  personalResult?: {
+    rank: number;
+    correctCount: number;
+    totalTime: number; // 秒，小數 2 位
+  };
+}
+```
+
+依 `gameState` 必填欄位：
+
+| gameState | 必填 | 禁止帶 |
+|-----------|------|--------|
+| `Prepare` | `roomId` / `roomName` / `roomState` / `quizCount`（0） | `question`、正確答案、`personalResult` |
+| `StartGame` | 同上 + 實際 `quizCount` + `phaseEndsAt` | `question`、正確答案 |
+| `Voting` | `question` + `phaseEndsAt`；若已提交則 `myAnswer` | 正確答案 |
+| `Settle` | `question` + `settle` + `phaseEndsAt` + 若有答過則 `myAnswer` | — |
+| `ShowAnswer` | `question` + `answerReveal`（可同時帶 `settle`）+ 若有答過則 `myAnswer` | `phaseEndsAt` 可省略 |
+| `ShowRanking` | `personalResult` | 不必再帶當題選項 |
+| `Finished` | `personalResult`（若有算過名次就帶） | — |
+
+`myAnswer` 只描述當前題。沒答過就不要帶此欄。`QuizGame:Question` 與 Voting snapshot **都不會**帶正確答案。
+
+---
+
+### 6.14 `error` / `{event}:error`
 
 見 [2.2 錯誤回應](#22-錯誤回應)。
 
@@ -544,7 +629,7 @@ User 端常見的 `{event}:error` 範例：
 | `VALIDATION` | 參數格式／必填欄位錯誤 |
 | `UNAUTHORIZED` | 未登入，或不在房間玩家名單 |
 | `NOT_FOUND` | 房間／遊戲不存在 |
-| `CONFLICT` | 狀態衝突（例如已在房間、重複加入、已用不同 id 登入） |
+| `CONFLICT` | 狀態衝突（例如已在房間、重複加入、已用不同 id 登入、userId 已被其他在線連線使用） |
 | `LOCKED` | 同一 event 處理中被重複觸發 |
 | `INVALID_STATE` | 目前狀態不允許此操作（未入房、非 Voting、房間已開局等） |
 
@@ -552,14 +637,36 @@ User 端常見的 `{event}:error` 範例：
 
 ## 8. 斷線行為
 
-User 斷線時，伺服器會：
+`userId` 才是房間成員；socket 只是暫時的連線。**斷線 ≠ 離房。**
 
-1. 若該 User 仍在房間內 → 自動 `LeaveUser`
-2. Manager 會收到 `Room:UserLeft`
-3. 從 user 對照表移除該 `userId`
-4. 清除該連線上的房間狀態
+User socket `disconnect` 且該人仍在某房間時：
 
-> 斷線不會自動保留「重連回原房」；重連後需重新 `User:Login` → `UserGame:JoinRoom`（且僅在房間仍為 `Prepare` 時可加入）。
+1. 標為離線（`connected = false`），**不**移出名單、**不**清作答／分數
+2. 啟動 **60 秒**寬限 timer
+3. Manager 收到 `Room:UserDisconnected`（**不會**同時收到 `Room:UserLeft`）
+4. 遊戲計時與階段照跑；未作答維持未作答
+5. 從 user 對照表移除該連線（讓同一 `userId` 可以再 Login 綁回）
+
+寬限內再 `User:Login`：
+
+1. 取消 timer，綁回同一房間／分數／作答
+2. 先收到 `User:Login`，立刻再收到完整 `UserGame:SessionSnapshot`（`inRoom: true`）
+3. Manager 收到 `Room:UserReconnected`（**不會**再收到 `Room:UserJoined`）
+4. **不要**再發 `UserGame:JoinRoom`
+
+寬限到期仍未重連：
+
+1. 真正離房（與 `LeaveRoom` 相同清理）
+2. Manager 收到 `Room:UserLeft`
+3. 之後 Login 的 snapshot 為 `{ inRoom: false }`；若房間已 `InGame` / `Finished`，`JoinRoom` 仍為 `INVALID_STATE`
+
+主動 `UserGame:LeaveRoom`：立刻離房，無 60 秒等待。
+
+若斷線時不在任何房間：只清對照表。
+
+若 Login 時該 `userId` 已有**其他在線連線**：回 `CONFLICT`（duplicate name），不踢舊連線、Manager 無事件。
+
+Manager 斷線仍關房，在線 User 收 `Room:Closed`。
 
 ---
 
@@ -579,18 +686,19 @@ User 斷線時，伺服器會：
 | Event | 對象 | 說明 |
 |-------|------|------|
 | `User:Login` | 自己 | 登入成功 |
+| `UserGame:SessionSnapshot` | 自己 | Login 後必推的會話快照 |
 | `UserGame:JoinRoom` | 自己 | 入房成功 |
 | `UserGame:LeaveRoom` | 自己 | 離房成功 |
 | `UserGame:SubmitAnswer` | 自己 | 提交答案成功 |
-| `QuizGame:GameStarted` | Manager + Users | 遊戲開始 |
-| `QuizGame:Question` | Manager + Users | 出題 |
-| `QuizGame:Settle` | Manager + Users | 結算 |
+| `QuizGame:GameStarted` | Manager + Users | 遊戲開始（含 `phaseEndsAt`） |
+| `QuizGame:Question` | Manager + Users | 出題（含 `phaseEndsAt`） |
+| `QuizGame:Settle` | Manager + Users | 結算（含 `phaseEndsAt`） |
 | `QuizGame:AnswerReveal` | Manager + Users | 公布答案 |
 | `QuizGame:NextQuestion` | Manager + Users | 下一題通知 |
 | `QuizGame:PersonalResult` | **僅該 User** | 個人名次與成績 |
 | `QuizGame:Finished` | Manager + Users | 遊戲結束 |
-| `Room:Closed` | 房間內 Users | Manager 斷線關房 |
+| `Room:Closed` | 房間內在線 Users | Manager 斷線關房 |
 | `error` | 自己 | 全域錯誤 |
 | `{event}:error` | 自己 | 特定 event 錯誤 |
 
-> User **不會**收到：`Room:UserJoined`、`Room:UserLeft`、`QuizGame:ShowRanking`（這些是 Manager 專屬）。
+> User **不會**收到：`Room:UserJoined`、`Room:UserLeft`、`Room:UserDisconnected`、`Room:UserReconnected`、`QuizGame:ShowRanking`（這些是 Manager 專屬）。

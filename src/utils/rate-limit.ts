@@ -30,3 +30,7 @@ export const EventLockAttemptProceed = (socketId: string, eventName: string): vo
     );
   }
 };
+
+export const EventLockClearSocket = (socketId: string): void => {
+  delete eventLockMap[socketId];
+};

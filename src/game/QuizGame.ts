@@ -1,5 +1,14 @@
 import { QuizGameRoom } from '../socket/room/QuizGameRoom';
-import { GameState, IPlayerStats, IQuizData, IRankingEntry } from '../types/quiz-game';
+import {
+  GameState,
+  IPlayerStats,
+  IQuizData,
+  IRankingEntry,
+  ISessionAnswerReveal,
+  ISessionPersonalResult,
+  ISessionSettle,
+  ISessionSnapshot,
+} from '../types/quiz-game';
 import { AppError, SocketErrorCode } from '../types/error';
 import { quizList } from '../data/quiz';
 
@@ -18,7 +27,11 @@ export class QuizGame {
   private currentAnswers = new Map<string, number>();
   private currentAnswerTimes = new Map<string, number>();
   private playerStats = new Map<string, IPlayerStats>();
+  private lastPersonalResults = new Map<string, ISessionPersonalResult>();
+  private lastSettle: ISessionSettle | null = null;
+  private lastAnswerReveal: ISessionAnswerReveal | null = null;
   private questionStartedAt = 0;
+  private phaseEndsAt: number | undefined;
   private currentQuestionTimeout: ReturnType<typeof setTimeout> | null = null;
   private currentPrepareTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -37,9 +50,11 @@ export class QuizGame {
 
     this.Reset();
     this.state = GameState.StartGame;
+    this.phaseEndsAt = Date.now() + this.PREPARE_TIME * 1000;
     this.room.BroadcastMessage('QuizGame:GameStarted', {
       roomId: this.roomId,
       quizCount: this.quizList.length,
+      phaseEndsAt: this.phaseEndsAt,
     });
 
     this.currentPrepareTimeout = setTimeout(() => {
@@ -52,7 +67,7 @@ export class QuizGame {
       throw new AppError('Answers can only be submitted during voting.', SocketErrorCode.INVALID_STATE);
     }
 
-    if (!this.room.players.has(userId)) {
+    if (!this.room.HasPlayer(userId)) {
       throw new AppError('User is not in this room.', SocketErrorCode.UNAUTHORIZED);
     }
 
@@ -106,6 +121,7 @@ export class QuizGame {
     }
 
     this.state = GameState.Finished;
+    this.phaseEndsAt = undefined;
     this.ClearCurrentQuestionTimeout();
     this.ClearCurrentPrepareTimeout();
 
@@ -115,12 +131,94 @@ export class QuizGame {
     });
   }
 
+  public RemovePlayer(userId: string) {
+    this.currentAnswers.delete(userId);
+    this.currentAnswerTimes.delete(userId);
+    this.playerStats.delete(userId);
+    this.lastPersonalResults.delete(userId);
+  }
+
+  public BuildSessionSnapshot(userId: string): ISessionSnapshot {
+    const snapshot: ISessionSnapshot = {
+      inRoom: true,
+      roomId: this.roomId,
+      roomName: this.room.roomName,
+      roomState: this.room.roomState,
+      gameState: this.state,
+      quizCount: this.state === GameState.Prepare ? 0 : this.quizList.length,
+    };
+
+    if (this.state === GameState.StartGame && this.phaseEndsAt !== undefined) {
+      snapshot.phaseEndsAt = this.phaseEndsAt;
+    }
+
+    if (
+      this.state === GameState.Voting
+      || this.state === GameState.Settle
+      || this.state === GameState.ShowAnswer
+    ) {
+      const currentQuiz = this.quizList[this.currentQuizIndex];
+      if (currentQuiz) {
+        snapshot.question = {
+          questionIndex: this.currentQuizIndex + 1,
+          question: currentQuiz.question,
+          options: currentQuiz.options,
+          votingTime: this.VOTING_TIME,
+          totalQuestions: this.quizList.length,
+        };
+      }
+
+      const selectedOption = this.currentAnswers.get(userId);
+      if (selectedOption !== undefined) {
+        snapshot.myAnswer = {
+          questionIndex: this.currentQuizIndex + 1,
+          selectedOption,
+        };
+      }
+    }
+
+    if (this.state === GameState.Voting && this.phaseEndsAt !== undefined) {
+      snapshot.phaseEndsAt = this.phaseEndsAt;
+    }
+
+    if (this.state === GameState.Settle) {
+      if (this.lastSettle) {
+        snapshot.settle = this.lastSettle;
+      }
+      if (this.phaseEndsAt !== undefined) {
+        snapshot.phaseEndsAt = this.phaseEndsAt;
+      }
+    }
+
+    if (this.state === GameState.ShowAnswer) {
+      if (this.lastAnswerReveal) {
+        snapshot.answerReveal = this.lastAnswerReveal;
+      }
+      if (this.lastSettle) {
+        snapshot.settle = this.lastSettle;
+      }
+    }
+
+    if (this.state === GameState.ShowRanking || this.state === GameState.Finished) {
+      const personalResult = this.lastPersonalResults.get(userId);
+      if (personalResult) {
+        snapshot.personalResult = personalResult;
+      }
+    }
+
+    return snapshot;
+  }
+
   public Dispose() {
     this.ClearCurrentQuestionTimeout();
     this.ClearCurrentPrepareTimeout();
     this.currentAnswers.clear();
     this.currentAnswerTimes.clear();
     this.playerStats.clear();
+    this.lastPersonalResults.clear();
+    this.lastSettle = null;
+    this.lastAnswerReveal = null;
+    this.phaseEndsAt = undefined;
     this.state = GameState.Prepare;
     this.currentQuizIndex = 0;
   }
@@ -136,7 +234,10 @@ export class QuizGame {
     this.state = GameState.Voting;
     this.currentAnswers.clear();
     this.currentAnswerTimes.clear();
+    this.lastSettle = null;
+    this.lastAnswerReveal = null;
     this.questionStartedAt = Date.now();
+    this.phaseEndsAt = this.questionStartedAt + this.VOTING_TIME * 1000;
 
     this.room.BroadcastMessage('QuizGame:Question', {
       roomId: this.roomId,
@@ -145,6 +246,7 @@ export class QuizGame {
       questionIndex: this.currentQuizIndex + 1,
       totalQuestions: this.quizList.length,
       votingTime: this.VOTING_TIME,
+      phaseEndsAt: this.phaseEndsAt,
     });
 
     this.ClearCurrentQuestionTimeout();
@@ -162,7 +264,7 @@ export class QuizGame {
     const currentQuiz = this.quizList[this.currentQuizIndex];
     const fullTimeMs = this.VOTING_TIME * 1000;
 
-    for (const userId of this.room.players) {
+    for (const userId of this.room.playerIds) {
       const stats = this.GetOrCreatePlayerStats(userId);
       const optionIndex = this.currentAnswers.get(userId);
 
@@ -177,17 +279,23 @@ export class QuizGame {
       }
     }
 
-    const answerSummary = Array.from(this.currentAnswers.entries()).map(([userId, optionIndex]) => ({
-      userId,
-      optionIndex,
-      isCorrect: optionIndex === currentQuiz.answer,
-    }));
+    this.lastSettle = {
+      questionIndex: this.currentQuizIndex + 1,
+      correctAnswer: currentQuiz.answer,
+      answers: Array.from(this.currentAnswers.entries()).map(([userId, optionIndex]) => ({
+        userId,
+        optionIndex,
+        isCorrect: optionIndex === currentQuiz.answer,
+      })),
+    };
+    this.phaseEndsAt = Date.now() + this.SETTLE_TIME * 1000;
 
     this.room.BroadcastMessage('QuizGame:Settle', {
       roomId: this.roomId,
-      questionIndex: this.currentQuizIndex + 1,
-      correctAnswer: currentQuiz.answer,
-      answers: answerSummary,
+      questionIndex: this.lastSettle.questionIndex,
+      correctAnswer: this.lastSettle.correctAnswer,
+      answers: this.lastSettle.answers,
+      phaseEndsAt: this.phaseEndsAt,
     });
 
     this.currentQuestionTimeout = setTimeout(() => {
@@ -197,20 +305,28 @@ export class QuizGame {
 
   private ShowAnswer() {
     this.state = GameState.ShowAnswer;
+    this.phaseEndsAt = undefined;
     const currentQuiz = this.quizList[this.currentQuizIndex];
 
     this.ClearCurrentQuestionTimeout();
 
-    this.room.BroadcastMessage('QuizGame:AnswerReveal', {
-      roomId: this.roomId,
+    this.lastAnswerReveal = {
       questionIndex: this.currentQuizIndex + 1,
       correctAnswer: currentQuiz.answer,
       totalAnswers: this.currentAnswers.size,
+    };
+
+    this.room.BroadcastMessage('QuizGame:AnswerReveal', {
+      roomId: this.roomId,
+      questionIndex: this.lastAnswerReveal.questionIndex,
+      correctAnswer: this.lastAnswerReveal.correctAnswer,
+      totalAnswers: this.lastAnswerReveal.totalAnswers,
     });
   }
 
   private ShowRanking() {
     this.state = GameState.ShowRanking;
+    this.phaseEndsAt = undefined;
     this.ClearCurrentQuestionTimeout();
     this.ClearCurrentPrepareTimeout();
 
@@ -218,6 +334,15 @@ export class QuizGame {
     const topRankings = this.BuildRankings({ excludeZeroCorrect: true }).filter(
       (entry) => entry.rank <= 10,
     );
+
+    this.lastPersonalResults.clear();
+    for (const entry of rankings) {
+      this.lastPersonalResults.set(entry.userId, {
+        rank: entry.rank,
+        correctCount: entry.correctCount,
+        totalTime: entry.totalTime,
+      });
+    }
 
     this.room.NotifyManager('QuizGame:ShowRanking', {
       roomId: this.roomId,
@@ -235,7 +360,7 @@ export class QuizGame {
   }
 
   private BuildRankings(options?: { excludeZeroCorrect?: boolean }): IRankingEntry[] {
-    let entries = Array.from(this.room.players).map((userId) => {
+    let entries = this.room.playerIds.map((userId) => {
       const stats = this.playerStats.get(userId) ?? { correctCount: 0, totalTimeMs: 0 };
       return {
         userId,
@@ -313,6 +438,10 @@ export class QuizGame {
     this.currentAnswers.clear();
     this.currentAnswerTimes.clear();
     this.playerStats.clear();
+    this.lastPersonalResults.clear();
+    this.lastSettle = null;
+    this.lastAnswerReveal = null;
+    this.phaseEndsAt = undefined;
     this.questionStartedAt = 0;
   }
 }

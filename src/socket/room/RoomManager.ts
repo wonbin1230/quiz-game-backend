@@ -27,6 +27,15 @@ export class RoomManager implements IRoomService {
     return this.roomList.get(roomName);
   }
 
+  public FindRoomByUserId(userId: string) {
+    for (const room of this.roomList.values()) {
+      if (room.HasPlayer(userId)) {
+        return room;
+      }
+    }
+    return undefined;
+  }
+
   public DeleteRoomsByManager(managerId: string) {
     const removedRooms: string[] = [];
 
@@ -35,7 +44,7 @@ export class RoomManager implements IRoomService {
         continue;
       }
 
-      for (const userId of room.players) {
+      for (const userId of room.playerIds) {
         const userContext = userContextMap.get(userId);
         if (!userContext) {
           continue;

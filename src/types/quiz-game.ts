@@ -39,3 +39,57 @@ export interface IQuizData {
   options: string[];
   answer: number;
 }
+
+export interface ISessionQuestion {
+  questionIndex: number;
+  question: string;
+  options: string[];
+  votingTime: number;
+  totalQuestions: number;
+}
+
+export interface ISessionMyAnswer {
+  questionIndex: number;
+  selectedOption: number;
+}
+
+export interface ISettleAnswer {
+  userId: string;
+  optionIndex: number;
+  isCorrect: boolean;
+}
+
+export interface ISessionSettle {
+  questionIndex: number;
+  correctAnswer: number;
+  answers: ISettleAnswer[];
+}
+
+export interface ISessionAnswerReveal {
+  questionIndex: number;
+  correctAnswer: number;
+  totalAnswers: number;
+}
+
+export interface ISessionPersonalResult {
+  rank: number;
+  correctCount: number;
+  totalTime: number;
+}
+
+export type ISessionSnapshot =
+  | { inRoom: false }
+  | {
+      inRoom: true;
+      roomId: string;
+      roomName: string;
+      roomState: RoomState;
+      gameState: GameState;
+      quizCount: number;
+      phaseEndsAt?: number;
+      question?: ISessionQuestion;
+      myAnswer?: ISessionMyAnswer;
+      settle?: ISessionSettle;
+      answerReveal?: ISessionAnswerReveal;
+      personalResult?: ISessionPersonalResult;
+    };

@@ -276,6 +276,39 @@
       font-weight: 600;
       white-space: nowrap;
     }
+
+    .user-roster {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.8rem;
+      min-height: 42px;
+    }
+
+    .user-roster-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 4px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .user-roster-item:last-child { border-bottom: none; }
+
+    .snapshot-box {
+      background: #0b1220;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.72rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 160px;
+      overflow: auto;
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -316,6 +349,7 @@
     </div>
     <p class="hint" style="margin-top: 10px;">
       直接用瀏覽器開啟此 HTML 檔即可。Socket 連線位址：<code id="socketUrlPreview">http://localhost:8000</code>
+      玩家重連：按 User 的 <strong>斷線</strong> 再按 <strong>重連</strong>（只 Login，不 Join）。同一 userId 若仍在線，第二次 Login 會收到 duplicate name 錯誤。
     </p>
   </header>
 
@@ -343,6 +377,10 @@
         </div>
         <p class="hint">自動流程會跑 Login → Create → Join → Start → 自動答題（各 User 獨立隨機延遲 1~10 秒）；到 <code>AnswerReveal</code> 後會暫停並取消未送出的答案，請手動按 <strong>Next Question</strong> 繼續。</p>
 
+        <div class="section-title">玩家名單</div>
+        <div id="managerUserList" class="user-roster">尚無玩家</div>
+        <p class="hint" id="phaseEndsAtHint">phaseEndsAt：—</p>
+
         <div class="section-title">事件紀錄</div>
         <div id="managerLog" class="log"></div>
         <button data-action="clear-manager-log">清除紀錄</button>
@@ -357,12 +395,14 @@
   <script>
     const KNOWN_EVENTS = [
       'Manager:Login',
-      'Room:CreateRoom', 'Room:StartGame', 'Room:NextQuestion',
-      'Room:UserJoined', 'Room:UserLeft',
+      'Room:CreateRoom', 'Room:StartGame', 'Room:NextQuestion', 'Room:FinishGame',
+      'Room:UserJoined', 'Room:UserLeft', 'Room:UserDisconnected', 'Room:UserReconnected',
+      'Room:Closed',
       'User:Login',
-      'UserGame:JoinRoom', 'UserGame:LeaveRoom', 'UserGame:SubmitAnswer',
+      'UserGame:JoinRoom', 'UserGame:LeaveRoom', 'UserGame:SubmitAnswer', 'UserGame:SessionSnapshot',
       'QuizGame:GameStarted', 'QuizGame:Question', 'QuizGame:Settle',
       'QuizGame:AnswerReveal', 'QuizGame:NextQuestion', 'QuizGame:Finished',
+      'QuizGame:PersonalResult', 'QuizGame:ShowRanking',
       'error',
     ];
 
@@ -385,6 +425,10 @@
       namePool: [],
       usedNameSet: new Set(),
       nextUserIndex: 1,
+      managerRoster: {
+        userList: [],
+        disconnectedUserIds: [],
+      },
     };
 
     const $ = (id) => document.getElementById(id);
@@ -487,8 +531,46 @@
       state.usedNameSet.delete(name);
     }
 
-    function highlightNextQuestion(shouldHighlight) {
-      $('nextQuestionBtn').classList.toggle('btn-highlight', shouldHighlight);
+    function formatPhaseEndsAt(ts) {
+      if (!ts || typeof ts !== 'number') return 'phaseEndsAt：—';
+      const remainSec = Math.max(0, Math.ceil((ts - Date.now()) / 1000));
+      return `phaseEndsAt：${ts}（約剩餘 ${remainSec}s）`;
+    }
+
+    function renderManagerRoster() {
+      const el = $('managerUserList');
+      if (!el) return;
+      const { userList, disconnectedUserIds } = state.managerRoster;
+      if (!userList.length) {
+        el.textContent = '尚無玩家';
+        return;
+      }
+      const offline = new Set(disconnectedUserIds);
+      el.innerHTML = userList.map((userId) => {
+        const isOffline = offline.has(userId);
+        return `<div class="user-roster-item"><span>${userId}</span><span class="status-badge ${isOffline ? 'status-disconnected' : 'status-connected'}">${isOffline ? '離線中' : '在線'}</span></div>`;
+      }).join('');
+    }
+
+    function applyManagerRoster(data) {
+      if (!data) return;
+      if (Array.isArray(data.userList)) {
+        state.managerRoster.userList = data.userList;
+      }
+      if (Array.isArray(data.disconnectedUserIds)) {
+        state.managerRoster.disconnectedUserIds = data.disconnectedUserIds;
+      }
+      renderManagerRoster();
+    }
+
+    function applyPhaseEndsAt(data, extraEls = []) {
+      if (data?.phaseEndsAt == null) return;
+      const text = formatPhaseEndsAt(data.phaseEndsAt);
+      const managerHint = $('phaseEndsAtHint');
+      if (managerHint) managerHint.textContent = text;
+      extraEls.forEach((el) => {
+        if (el) el.textContent = text;
+      });
     }
 
     function createSocket(system) {
@@ -517,6 +599,7 @@
           appendLog(logEl, 'recv', `[${role}] RECV`, eventName, data);
           handleAutoEvent(role, eventName, data);
           handleUserAutoAnswerEvent(role, eventName, data);
+          handleReconnectUi(role, eventName, data, logEl);
         });
       });
 
@@ -602,6 +685,8 @@
 
       socket.on('Room:CreateRoom', (data) => {
         state.roomId = data?.roomId ?? null;
+        state.managerRoster = { userList: [], disconnectedUserIds: [] };
+        renderManagerRoster();
       });
 
       socket.on('connect', () => updateManagerStatus(true));
@@ -634,6 +719,7 @@
             <button class="btn-user" data-user-action="connect">連線</button>
             <button data-user-action="disconnect" class="btn-danger">斷線</button>
             <button data-user-action="login">Login</button>
+            <button class="btn-user" data-user-action="reconnect">重連</button>
             <button data-user-action="join">Join Room</button>
             <button data-user-action="leave">Leave Room</button>
           </div>
@@ -645,6 +731,9 @@
             <button data-user-action="submit">Submit Answer</button>
             <button data-user-action="submit-random">Submit Random</button>
           </div>
+          <div class="section-title">Session Snapshot</div>
+          <div class="snapshot-box user-snapshot">尚未收到 UserGame:SessionSnapshot</div>
+          <p class="hint user-phase-hint">phaseEndsAt：—</p>
           <div class="section-title">事件紀錄</div>
           <div class="user-log log"></div>
           <button data-user-action="clear-log">清除紀錄</button>
@@ -693,6 +782,8 @@
         pendingAnswerTimeout: null,
         logEl: card.querySelector('.user-log'),
         statusEl: card.querySelector('.user-status'),
+        snapshotEl: card.querySelector('.user-snapshot'),
+        phaseHintEl: card.querySelector('.user-phase-hint'),
       };
       state.users.push(record);
       bindUserCardEvents(card, record);
@@ -798,6 +889,9 @@
             if (!record.socket?.connected) return;
             emitEvent(record.socket, record.logEl, `User ${record.index}`, 'User:Login', { userId });
             break;
+          case 'reconnect':
+            reconnectUser(record);
+            break;
           case 'join':
             if (!record.socket?.connected) return;
             emitEvent(record.socket, record.logEl, `User ${record.index}`, 'UserGame:JoinRoom', { roomName });
@@ -845,6 +939,17 @@
         record.loggedIn = true;
       });
 
+      socket.on('UserGame:SessionSnapshot', (data) => {
+        record.loggedIn = true;
+        record.inRoom = !!data?.inRoom;
+        if (record.snapshotEl) {
+          record.snapshotEl.textContent = formatData(data);
+        }
+        if (data?.phaseEndsAt) {
+          applyPhaseEndsAt(data, [record.phaseHintEl]);
+        }
+      });
+
       socket.on('UserGame:JoinRoom', () => {
         record.inRoom = true;
       });
@@ -853,7 +958,7 @@
         record.inRoom = false;
       });
 
-      socket.on('QuizGame:Finished', () => {
+      socket.on('Room:Closed', () => {
         record.inRoom = false;
       });
 
@@ -876,6 +981,55 @@
       updateUserStatus(record, false);
       record.loggedIn = false;
       record.inRoom = false;
+    }
+
+    async function reconnectUser(record) {
+      const userId = record.card.querySelector('.user-id-input').value.trim();
+      if (!userId) {
+        appendLog(record.logEl, 'error', `[User ${record.index}]`, 'reconnect', { message: '缺少 userId' });
+        return;
+      }
+
+      appendLog(record.logEl, 'info', `[User ${record.index}]`, 'reconnect', {
+        message: '斷線後重新連線並 Login（不發 JoinRoom）',
+        userId,
+      });
+      disconnectUser(record);
+      await sleep(200);
+      await connectUser(record);
+      emitEvent(record.socket, record.logEl, `User ${record.index}`, 'User:Login', { userId });
+    }
+
+    function handleReconnectUi(role, eventName, data) {
+      if (role === 'Manager') {
+        if (
+          eventName === 'Room:UserJoined'
+          || eventName === 'Room:UserLeft'
+          || eventName === 'Room:UserDisconnected'
+          || eventName === 'Room:UserReconnected'
+        ) {
+          applyManagerRoster(data);
+        }
+        if (
+          eventName === 'QuizGame:GameStarted'
+          || eventName === 'QuizGame:Question'
+          || eventName === 'QuizGame:Settle'
+        ) {
+          applyPhaseEndsAt(data);
+        }
+        return;
+      }
+
+      const user = state.users.find((u) => `User ${u.index}` === role);
+      if (!user) return;
+
+      if (
+        eventName === 'QuizGame:GameStarted'
+        || eventName === 'QuizGame:Question'
+        || eventName === 'QuizGame:Settle'
+      ) {
+        applyPhaseEndsAt(data, [user.phaseHintEl]);
+      }
     }
 
     function randomAnswerDelayMs() {
@@ -929,6 +1083,8 @@
       updateManagerStatus(false);
       state.managerLoggedIn = false;
       state.roomId = null;
+      state.managerRoster = { userList: [], disconnectedUserIds: [] };
+      renderManagerRoster();
       state.users.forEach(disconnectUser);
     }
 

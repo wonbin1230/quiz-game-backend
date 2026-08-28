@@ -151,13 +151,16 @@ UI：Manager 和 User 的 log 都要顯示，不加按鈕
 | `Room:NextQuestion` | 下一題成功 |
 | `Room:UserJoined` | 玩家加入（Manager 收到） |
 | `Room:UserLeft` | 玩家離開（Manager 收到） |
+| `Room:UserDisconnected` | 玩家斷線寬限（Manager 收到） |
+| `Room:UserReconnected` | 玩家重連綁回（Manager 收到） |
 | `User:Login` | User 登入成功 |
+| `UserGame:SessionSnapshot` | Login 後會話快照 |
 | `UserGame:JoinRoom` | 加入房間成功 |
 | `UserGame:LeaveRoom` | 離開房間成功 |
 | `UserGame:SubmitAnswer` | 提交答案成功 |
-| `QuizGame:GameStarted` | 遊戲開始廣播 |
-| `QuizGame:Question` | 出題 |
-| `QuizGame:Settle` | 結算 |
+| `QuizGame:GameStarted` | 遊戲開始廣播（含 `phaseEndsAt`） |
+| `QuizGame:Question` | 出題（含 `phaseEndsAt`） |
+| `QuizGame:Settle` | 結算（含 `phaseEndsAt`） |
 | `QuizGame:AnswerReveal` | 公布答案 |
 | `QuizGame:NextQuestion` | 下一題廣播 |
 | `QuizGame:Finished` | 遊戲結束 |

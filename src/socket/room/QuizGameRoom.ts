@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
-import { RoomState } from '../../types/room';
-import { toRoomState } from '../../types/quiz-game';
+import { IPlayerPresence, IRoomUserPresencePayload, RoomState, USER_DISCONNECT_GRACE_MS } from '../../types/room';
+import { GameState, ISessionSnapshot, toRoomState } from '../../types/quiz-game';
 import { QuizGame } from '../../game/QuizGame';
 import { AppError, SocketErrorCode } from '../../types/error';
 import { ModuleLogger } from '../../utils/log';
@@ -13,13 +13,24 @@ export class QuizGameRoom {
   managerId = '';
 
   game: QuizGame | null = null;
-  players: Set<string> = new Set();
+  players: Map<string, IPlayerPresence> = new Map();
+  private disconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
   get roomState(): RoomState {
     if (!this.game) {
       return RoomState.Prepare;
     }
     return toRoomState(this.game.state);
+  }
+
+  get playerIds(): string[] {
+    return Array.from(this.players.keys());
+  }
+
+  get disconnectedUserIds(): string[] {
+    return Array.from(this.players.values())
+      .filter((player) => !player.connected)
+      .map((player) => player.userId);
   }
 
   public Prepare(managerId: string, roomName: string) {
@@ -51,7 +62,7 @@ export class QuizGameRoom {
     this.game.FinishGame();
   }
 
-  public JoinUser = (userId: string) => {
+  public JoinUser = (userId: string, socketId: string) => {
     if (this.roomState !== RoomState.Prepare) {
       throw new AppError('Room is already in progress or finished.', SocketErrorCode.INVALID_STATE);
     }
@@ -64,12 +75,13 @@ export class QuizGameRoom {
       throw new AppError('User is already in the room.', SocketErrorCode.CONFLICT);
     }
 
-    this.players.add(userId);
-    this.NotifyManager('Room:UserJoined', {
+    this.players.set(userId, {
       userId,
-      userList: Array.from(this.players),
-      userCount: this.players.size,
+      socketId,
+      connected: true,
+      disconnectedAt: null,
     });
+    this.NotifyManager('Room:UserJoined', this.BuildUserPresencePayload(userId));
   }
 
   public LeaveUser = (userId: string) => {
@@ -77,19 +89,83 @@ export class QuizGameRoom {
       return;
     }
 
+    this.ClearDisconnectTimer(userId);
     this.players.delete(userId);
-    this.NotifyManager('Room:UserLeft', {
-      userId,
-      userList: Array.from(this.players),
-      userCount: this.players.size,
-    });
+    this.game?.RemovePlayer(userId);
+    this.NotifyManager('Room:UserLeft', this.BuildUserPresencePayload(userId));
+  }
+
+  public HandleUserDisconnect = (userId: string) => {
+    const player = this.players.get(userId);
+    if (!player || !player.connected) {
+      return;
+    }
+
+    player.connected = false;
+    player.socketId = null;
+    player.disconnectedAt = Date.now();
+
+    this.ClearDisconnectTimer(userId);
+    const timer = setTimeout(() => {
+      this.disconnectTimers.delete(userId);
+      const current = this.players.get(userId);
+      if (current && !current.connected) {
+        this.LeaveUser(userId);
+      }
+    }, USER_DISCONNECT_GRACE_MS);
+    this.disconnectTimers.set(userId, timer);
+
+    this.NotifyManager('Room:UserDisconnected', this.BuildUserPresencePayload(userId));
+  }
+
+  public ReconnectUser = (userId: string, socketId: string) => {
+    const player = this.players.get(userId);
+    if (!player) {
+      return;
+    }
+
+    const wasDisconnected = !player.connected;
+    this.ClearDisconnectTimer(userId);
+    player.connected = true;
+    player.socketId = socketId;
+    player.disconnectedAt = null;
+
+    if (wasDisconnected) {
+      this.NotifyManager('Room:UserReconnected', this.BuildUserPresencePayload(userId));
+    }
+  }
+
+  public HasPlayer = (userId: string) => {
+    return this.players.has(userId);
+  }
+
+  public BuildSessionSnapshot = (userId: string): ISessionSnapshot => {
+    if (!this.players.has(userId)) {
+      return { inRoom: false };
+    }
+
+    if (!this.game) {
+      return {
+        inRoom: true,
+        roomId: this.roomId,
+        roomName: this.roomName,
+        roomState: this.roomState,
+        gameState: GameState.Prepare,
+        quizCount: 0,
+      };
+    }
+
+    return this.game.BuildSessionSnapshot(userId);
   }
 
   public BroadcastMessage = (event: string, data: any) => {
     this.NotifyManager(event, data);
 
-    for (const userId of this.players) {
-      const userContext = userContextMap.get(userId);
+    for (const player of this.players.values()) {
+      if (!player.connected) {
+        continue;
+      }
+      const userContext = userContextMap.get(player.userId);
       if (!userContext) {
         continue;
       }
@@ -115,8 +191,28 @@ export class QuizGameRoom {
   }
 
   public Dispose = () => {
+    for (const userId of this.disconnectTimers.keys()) {
+      this.ClearDisconnectTimer(userId);
+    }
     this.game?.Dispose();
     this.players.clear();
     this.game = null;
+  }
+
+  private BuildUserPresencePayload = (userId: string): IRoomUserPresencePayload => {
+    return {
+      userId,
+      userList: this.playerIds,
+      userCount: this.players.size,
+      disconnectedUserIds: this.disconnectedUserIds,
+    };
+  }
+
+  private ClearDisconnectTimer = (userId: string) => {
+    const timer = this.disconnectTimers.get(userId);
+    if (timer) {
+      clearTimeout(timer);
+      this.disconnectTimers.delete(userId);
+    }
   }
 }

@@ -1,4 +1,5 @@
 import { UserContext } from '../socket/user/UserContext';
+import { QuizGameRoom } from '../socket/room/QuizGameRoom';
 import { AppError, SocketErrorCode } from '../types/error';
 import { ControllerBase } from './ControllerBase';
 
@@ -21,7 +22,8 @@ export class UserGameController extends ControllerBase<UserContext> {
       throw new AppError('User must be logged in before joining a room.', SocketErrorCode.UNAUTHORIZED);
     }
 
-    if (this.roomId) {
+    const existingRoom = this.context.roomService.FindRoomByUserId(this.context.userId);
+    if (this.roomId || existingRoom) {
       throw new AppError(
         'User is already in a room. Please leave the current room before joining another.',
         SocketErrorCode.CONFLICT,
@@ -37,11 +39,9 @@ export class UserGameController extends ControllerBase<UserContext> {
       throw new AppError('Room not found.', SocketErrorCode.NOT_FOUND);
     }
 
-    room.JoinUser(this.context.userId);
+    room.JoinUser(this.context.userId, this.context.socket.id);
 
-    this.roomName = room.roomName;
-    this.roomId = room.roomId;
-    this.context.socket.join(room.roomId);
+    this.AttachToRoom(room);
 
     this.EmitSuccessResponse('JoinRoom', { roomId: room.roomId });
   }
@@ -92,8 +92,46 @@ export class UserGameController extends ControllerBase<UserContext> {
     });
   }
 
+  BindExistingRoom = () => {
+    if (!this.context.userId) {
+      return;
+    }
+
+    const room = this.context.roomService.FindRoomByUserId(this.context.userId);
+    if (!room) {
+      return;
+    }
+
+    this.AttachToRoom(room);
+    room.ReconnectUser(this.context.userId, this.context.socket.id);
+  }
+
+  EmitSessionSnapshot = () => {
+    if (!this.context.userId) {
+      this.EmitSuccessResponse('SessionSnapshot', { inRoom: false });
+      return;
+    }
+
+    const room = this.roomName
+      ? this.context.roomService.GetRoom(this.roomName)
+      : this.context.roomService.FindRoomByUserId(this.context.userId);
+
+    if (!room?.HasPlayer(this.context.userId)) {
+      this.EmitSuccessResponse('SessionSnapshot', { inRoom: false });
+      return;
+    }
+
+    this.EmitSuccessResponse('SessionSnapshot', room.BuildSessionSnapshot(this.context.userId));
+  }
+
   ClearRoomState = () => {
     this.roomName = null;
     this.roomId = null;
+  }
+
+  private AttachToRoom = (room: QuizGameRoom) => {
+    this.roomName = room.roomName;
+    this.roomId = room.roomId;
+    this.context.socket.join(room.roomId);
   }
 }

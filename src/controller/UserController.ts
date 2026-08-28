@@ -25,11 +25,13 @@ export class UserController extends ControllerBase<UserContext> {
     }
 
     if (!this.context.userId) {
-      this.context.userId = data.userId;
       UserContextRegister(data.userId, this.context.socket.id);
       this.context.MassEventRegister();
     }
 
+    this.context.userGameController.BindExistingRoom();
+
     this.EmitSuccessResponse('Login', { userId: data.userId });
+    this.context.userGameController.EmitSessionSnapshot();
   }
 }

@@ -153,7 +153,7 @@ Manager 在流程中的主動操作點：
 連線（system=Manager）
   → Manager:Login
   → Room:CreateRoom
-  →（監聽 Room:UserJoined / Room:UserLeft）
+  →（監聽 Room:UserJoined / Room:UserLeft / Room:UserDisconnected / Room:UserReconnected）
   → Room:StartGame
   → 監聽 QuizGame:GameStarted
   → 監聽 QuizGame:Question / Settle / AnswerReveal
@@ -244,7 +244,7 @@ Manager 在流程中的主動操作點：
 }
 ```
 
-**隨後廣播（Manager + 房間內所有 User）：** `QuizGame:GameStarted`  
+**隨後廣播（Manager + 房間內所有 User）：** `QuizGame:GameStarted`（含 `phaseEndsAt`）  
 約 3 秒後再廣播：`QuizGame:Question`
 
 **可能錯誤**
@@ -377,14 +377,15 @@ Manager 在流程中的主動操作點：
 ```ts
 {
   userId: string;
-  userList: string[]; // 目前房間內所有 userId
+  userList: string[]; // 目前房間內所有 userId（含離線寬限中）
   userCount: number;
+  disconnectedUserIds: string[]; // 目前 connected === false 的人；Joined 時通常為 []
 }
 ```
 
 | 項目 | 內容 |
 |------|------|
-| 觸發時機 | User 成功 `UserGame:JoinRoom` |
+| 觸發時機 | User **第一次**成功 `UserGame:JoinRoom`（重連不會再推） |
 | 接收者 | 僅 Manager |
 
 ---
@@ -396,21 +397,55 @@ Manager 在流程中的主動操作點：
 ```ts
 {
   userId: string;
-  userList: string[];
+  userList: string[]; // 更新後名單（已不含此人）
   userCount: number;
+  disconnectedUserIds: string[];
 }
 ```
 
 | 項目 | 內容 |
 |------|------|
-| 觸發時機 | User 主動 `UserGame:LeaveRoom`，或 User 斷線導致離房 |
+| 觸發時機 | User 主動 `UserGame:LeaveRoom`，或斷線後 **60 秒**寬限到期 |
 | 接收者 | 僅 Manager |
 
-> 若 user 本來就不在房間，Leave 不會再推送此事件。
+> 短暫斷線**不會**推此事件。若 user 本來就不在房間，Leave 不會再推送。
 
 ---
 
-### 6.8 `QuizGame:GameStarted`
+### 6.8 `Room:UserDisconnected`
+
+玩家斷線、進入 60 秒寬限時推給 **該房間的 Manager**。
+
+```ts
+{
+  userId: string;
+  userList: string[];           // 仍在房的全部 userId（含離線中）
+  userCount: number;
+  disconnectedUserIds: string[];
+}
+```
+
+| 項目 | 內容 |
+|------|------|
+| 觸發時機 | 在房 User 斷線、進入寬限 |
+| 注意 | **不要**同時當成離房；名單仍包含此人 |
+
+---
+
+### 6.9 `Room:UserReconnected`
+
+寬限內 Login 綁回時推給 **該房間的 Manager**。
+
+Payload 與 `Room:UserDisconnected` 相同。
+
+| 項目 | 內容 |
+|------|------|
+| 觸發時機 | 離線中的 userId 再次 Login 成功並綁回 |
+| 注意 | **不會**再推 `Room:UserJoined`。同一 `userId` 在對方仍在線時嘗試 Login 會被拒絕，不會發生互踢、也不會推此事件 |
+
+---
+
+### 6.10 `QuizGame:GameStarted`
 
 遊戲開始廣播（Manager + 所有房間內 User）。
 
@@ -418,17 +453,18 @@ Manager 在流程中的主動操作點：
 {
   roomId: string;
   quizCount: number; // 本場總題數
+  phaseEndsAt: number; // Unix ms，第一題開始時間
 }
 ```
 
 | 項目 | 內容 |
 |------|------|
 | 觸發時機 | `Room:StartGame` 成功後立即 |
-| 之後 | 約 3 秒自動出第一題 `QuizGame:Question` |
+| 之後 | 約 3 秒自動出第一題 `QuizGame:Question`（以 `phaseEndsAt` 為準） |
 
 ---
 
-### 6.9 `QuizGame:Question`
+### 6.11 `QuizGame:Question`
 
 出題（Manager + 所有房間內 User）。
 
@@ -440,6 +476,7 @@ Manager 在流程中的主動操作點：
   questionIndex: number;  // 1-based
   totalQuestions: number;
   votingTime: number;     // 秒，目前固定 12
+  phaseEndsAt: number;    // Unix ms，投票截止
 }
 ```
 
@@ -447,11 +484,11 @@ Manager 在流程中的主動操作點：
 |------|------|
 | 遊戲狀態 | 進入 `Voting` |
 | 注意 | **不會**帶正確答案 |
-| 之後 | `votingTime` 秒後自動 `QuizGame:Settle` |
+| 之後 | 到 `phaseEndsAt` 自動 `QuizGame:Settle` |
 
 ---
 
-### 6.10 `QuizGame:Settle`
+### 6.12 `QuizGame:Settle`
 
 投票結束結算（Manager + 所有房間內 User）。
 
@@ -465,6 +502,7 @@ Manager 在流程中的主動操作點：
     optionIndex: number;
     isCorrect: boolean;
   }>;
+  phaseEndsAt: number; // Unix ms，進入 AnswerReveal 的時間
 }
 ```
 
@@ -476,7 +514,7 @@ Manager 在流程中的主動操作點：
 
 ---
 
-### 6.11 `QuizGame:AnswerReveal`
+### 6.13 `QuizGame:AnswerReveal`
 
 公布答案（Manager + 所有房間內 User）。
 
@@ -496,7 +534,7 @@ Manager 在流程中的主動操作點：
 
 ---
 
-### 6.12 `QuizGame:NextQuestion`
+### 6.14 `QuizGame:NextQuestion`
 
 即將進入下一題的通知（Manager + 所有房間內 User）。
 
@@ -514,7 +552,7 @@ Manager 在流程中的主動操作點：
 
 ---
 
-### 6.13 `QuizGame:ShowRanking`
+### 6.15 `QuizGame:ShowRanking`
 
 排行榜（**僅 Manager**）。
 
@@ -542,7 +580,7 @@ Manager 在流程中的主動操作點：
 
 ---
 
-### 6.14 `QuizGame:Finished`
+### 6.16 `QuizGame:Finished`
 
 遊戲結束廣播（Manager + 所有房間內 User）。
 
@@ -560,7 +598,7 @@ Manager 在流程中的主動操作點：
 
 ---
 
-### 6.15 `error` / `{event}:error`
+### 6.17 `error` / `{event}:error`
 
 見 [2.2 錯誤回應](#22-錯誤回應)。
 
@@ -589,11 +627,13 @@ Manager 端常見的 `{event}:error` 範例：
 
 ## 8. 斷線行為
 
+### 8.1 Manager 斷線
+
 Manager 斷線時，伺服器會：
 
 1. 從 manager 對照表移除該 `managerId`
-2. **刪除該 Manager 擁有的所有房間**
-3. 對房間內每位 User emit `Room:Closed`：
+2. **刪除該 Manager 擁有的所有房間**（取消玩家斷線寬限 timer）
+3. 對房間內**在線** User emit `Room:Closed`：
 
 ```ts
 {
@@ -605,7 +645,14 @@ Manager 斷線時，伺服器會：
 
 4. 清理遊戲計時器與玩家狀態，並讓相關 socket 離開該 `roomId`
 
-> Manager 斷線等於房間強制關閉；請確保前端有處理重連與房間重建流程。
+> Manager 斷線等於房間強制關閉。這次不做主持人保房／重連。
+
+### 8.2 玩家斷線（Manager 視角）
+
+- 玩家斷線：`Room:UserDisconnected`，名單**仍包含**該人，並以 `disconnectedUserIds` 標示離線
+- 60 秒內重連：`Room:UserReconnected`，從 `disconnectedUserIds` 移除
+- 60 秒到期或主動 Leave：`Room:UserLeft`，從 `userList` 移除
+- 同一 `userId` 在對方仍在線時嘗試 Login：server 拒絕該次 Login，Manager **不會**收到任何事件
 
 ---
 
@@ -631,10 +678,12 @@ Manager 斷線時，伺服器會：
 | `Room:NextQuestion` | 自己 | 下一題成功回應 |
 | `Room:FinishGame` | 自己 | 結束成功回應 |
 | `Room:UserJoined` | Manager | 玩家加入 |
-| `Room:UserLeft` | Manager | 玩家離開 |
-| `QuizGame:GameStarted` | Manager + Users | 遊戲開始 |
-| `QuizGame:Question` | Manager + Users | 出題 |
-| `QuizGame:Settle` | Manager + Users | 結算 |
+| `Room:UserLeft` | Manager | 玩家真正離房 |
+| `Room:UserDisconnected` | Manager | 玩家斷線（寬限中，仍在名單） |
+| `Room:UserReconnected` | Manager | 玩家寬限內重連 |
+| `QuizGame:GameStarted` | Manager + Users | 遊戲開始（含 `phaseEndsAt`） |
+| `QuizGame:Question` | Manager + Users | 出題（含 `phaseEndsAt`） |
+| `QuizGame:Settle` | Manager + Users | 結算（含 `phaseEndsAt`） |
 | `QuizGame:AnswerReveal` | Manager + Users | 公布答案 |
 | `QuizGame:NextQuestion` | Manager + Users | 下一題通知 |
 | `QuizGame:ShowRanking` | **僅 Manager** | 排行榜 Top10 |
