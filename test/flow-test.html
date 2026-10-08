@@ -322,11 +322,11 @@
     <div class="config-row">
       <div class="field">
         <label for="hostInput">Host</label>
-        <input id="hostInput" type="text" value="localhost" />
+        <input id="hostInput" type="text" value="wss://yu-wedding.duckdns.org" />
       </div>
       <div class="field">
         <label for="portInput">Port</label>
-        <input id="portInput" type="number" value="8000" min="1" max="65535" />
+        <input id="portInput" type="number" value="" min="1" max="65535" placeholder="選填，例如 8000" />
       </div>
       <div class="field">
         <label for="roomNameInput">Room Name</label>
@@ -348,7 +348,7 @@
       <button id="disconnectAllBtn" class="btn-danger">全部斷線</button>
     </div>
     <p class="hint" style="margin-top: 10px;">
-      直接用瀏覽器開啟此 HTML 檔即可。Socket 連線位址：<code id="socketUrlPreview">http://localhost:8000</code>
+      直接用瀏覽器開啟此 HTML 檔即可。Socket 連線位址：<code id="socketUrlPreview">wss://yu-wedding.duckdns.org</code>
       玩家重連：按 User 的 <strong>斷線</strong> 再按 <strong>重連</strong>（只 Login，不 Join）。同一 userId 若仍在線，第二次 Login 會收到 duplicate name 錯誤。
     </p>
   </header>
@@ -456,9 +456,18 @@
     }
 
     function getSocketUrl() {
-      const host = $('hostInput').value.trim() || 'localhost';
-      const port = $('portInput').value.trim() || '8000';
-      return `http://${host}:${port}`;
+      const rawHost = $('hostInput').value.trim() || 'localhost';
+      const port = $('portInput').value.trim();
+      const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(rawHost);
+      const base = (hasScheme ? rawHost : `http://${rawHost}`).replace(/\/+$/, '');
+
+      if (!port) {
+        return base;
+      }
+
+      const url = new URL(base);
+      url.port = port;
+      return url.origin;
     }
 
     function updateSocketPreview() {
@@ -1170,6 +1179,12 @@
       } catch (err) {
         stopAuto(`自動流程失敗：${err.message}`);
       }
+    }
+
+    function highlightNextQuestion(on) {
+      const btn = $('nextQuestionBtn');
+      if (!btn) return;
+      btn.classList.toggle('btn-highlight', !!on);
     }
 
     function stopAuto(message = '自動流程：已停止') {
