@@ -4,7 +4,7 @@ export enum RoomState {
   Finished = 'Finished',
 }
 
-export const USER_DISCONNECT_GRACE_MS = 60_000;
+export const USER_DISCONNECT_GRACE_MS = 1800_000;
 
 export interface IPlayerPresence {
   userId: string;

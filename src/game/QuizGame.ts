@@ -14,7 +14,7 @@ import { quizList } from '../data/quiz';
 
 export class QuizGame {
   private readonly PREPARE_TIME = 3;
-  private readonly VOTING_TIME = 12;
+  private readonly VOTING_TIME = 10;
   private readonly SETTLE_TIME = 3;
 
   room: QuizGameRoom;
@@ -97,7 +97,7 @@ export class QuizGame {
       );
     }
 
-    if (this.currentQuizIndex >= this.quizList.length - 18) {
+    if (this.currentQuizIndex >= this.quizList.length - 1) {
       this.ShowRanking();
       return;
     }
