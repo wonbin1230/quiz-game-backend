@@ -92,6 +92,11 @@
     .btn-manager { background: #0369a1; border-color: var(--manager); }
     .btn-user { background: #166534; border-color: var(--user); }
     .btn-danger { background: #991b1b; border-color: #dc2626; }
+    .btn-name-list.active {
+      background: #166534;
+      border-color: var(--user);
+      color: #ecfdf5;
+    }
     .btn-auto { background: #7c3aed; border-color: #8b5cf6; }
     .btn-highlight {
       animation: pulse 1s infinite;
@@ -337,6 +342,10 @@
         <input id="managerIdInput" type="text" value="manager-1" />
       </div>
       <button id="connectManagerBtn" class="btn-manager">連線 Manager</button>
+      <div class="btn-group" id="nameListButtons">
+        <button type="button" class="btn-name-list active" data-name-list="1">名單 1</button>
+        <button type="button" class="btn-name-list" data-name-list="2">名單 2</button>
+      </div>
       <button id="addUserBtn" class="btn-user">新增 User</button>
       <div class="field">
         <label for="batchAddUserCountInput">批次數量</label>
@@ -349,6 +358,7 @@
     </div>
     <p class="hint" style="margin-top: 10px;">
       直接用瀏覽器開啟此 HTML 檔即可。Socket 連線位址：<code id="socketUrlPreview">wss://yu-wedding.duckdns.org</code>
+      名單 1、名單 2 各 200 個名字且互不重複，新增 User 會使用目前選中的那一份。
       玩家重連：按 User 的 <strong>斷線</strong> 再按 <strong>重連</strong>（只 Login，不 Join）。同一 userId 若仍在線，第二次 Login 會收到 duplicate name 錯誤。
     </p>
   </header>
@@ -407,6 +417,10 @@
     ];
 
     const MAX_USERS = 200;
+    const NAME_LIST_OPTIONS = [
+      { id: '1', label: '名單 1', file: './name-list-1.json' },
+      { id: '2', label: '名單 2', file: './name-list-2.json' },
+    ];
 
     const state = {
       managerSocket: null,
@@ -423,6 +437,7 @@
         step: 'idle',
       },
       namePool: [],
+      activeNameListId: '1',
       usedNameSet: new Set(),
       nextUserIndex: 1,
       managerRoster: {
@@ -433,7 +448,7 @@
 
     const $ = (id) => document.getElementById(id);
 
-    function buildFallbackNameList() {
+    function buildFallbackNameList(listId) {
       const familyNames = [
         '陳', '林', '黃', '張', '李', '王', '吳', '劉', '蔡', '楊',
         '許', '鄭', '謝', '郭', '洪', '曾', '邱', '廖', '賴', '徐',
@@ -447,12 +462,35 @@
       for (const family of familyNames) {
         for (const given of givenNames) {
           names.push(`${family}${given}`);
-          if (names.length >= 300) {
-            return names;
-          }
         }
       }
-      return names;
+
+      const start = listId === '2' ? 200 : 0;
+      return names.slice(start, start + 200);
+    }
+
+    function getNameListOption(listId) {
+      return NAME_LIST_OPTIONS.find((item) => item.id === listId) || NAME_LIST_OPTIONS[0];
+    }
+
+    function syncUsedNamesFromCards() {
+      const next = new Set();
+      state.users.forEach((user) => {
+        const name = user.card.querySelector('.user-id-input')?.value?.trim();
+        if (name) next.add(name);
+      });
+      state.usedNameSet = next;
+    }
+
+    function updateNameListButtons() {
+      const option = getNameListOption(state.activeNameListId);
+      document.querySelectorAll('[data-name-list]').forEach((btn) => {
+        const active = btn.dataset.nameList === state.activeNameListId;
+        btn.classList.toggle('active', active);
+        btn.textContent = active
+          ? `${option.label}（${state.namePool.length}）`
+          : getNameListOption(btn.dataset.nameList).label;
+      });
     }
 
     function getSocketUrl() {
@@ -506,24 +544,51 @@
       el.className = 'auto-status' + (mode ? ` ${mode}` : '');
     }
 
-    async function loadNameList() {
+    let nameListRequestId = 0;
+
+    async function loadNameList(listId = state.activeNameListId) {
+      const option = getNameListOption(listId);
+      const requestId = ++nameListRequestId;
+      state.activeNameListId = option.id;
+      document.querySelectorAll('[data-name-list]').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.nameList === option.id);
+      });
+
+      let nextPool = null;
+      let logType = 'info';
+      let logData = null;
+
       try {
-        const res = await fetch('./name-list.json');
+        const res = await fetch(option.file);
         if (!res.ok) {
           throw new Error(`讀取失敗: ${res.status}`);
         }
         const list = await res.json();
         if (!Array.isArray(list) || list.length === 0) {
-          throw new Error('name-list.json 內容格式錯誤');
+          throw new Error(`${option.file} 內容格式錯誤`);
         }
-        state.namePool = [...new Set(list.map((item) => String(item).trim()).filter(Boolean))];
+        nextPool = [...new Set(list.map((item) => String(item).trim()).filter(Boolean))];
+        logData = {
+          message: `已使用${option.label}`,
+          file: option.file,
+          count: nextPool.length,
+        };
       } catch (error) {
-        state.namePool = buildFallbackNameList();
-        appendLog($('managerLog'), 'warn', '[System]', 'name-list', {
-          message: '無法讀取 test/name-list.json，已改用內建中文名單',
+        nextPool = buildFallbackNameList(option.id);
+        logType = 'warn';
+        logData = {
+          message: `無法讀取 test/${option.file.replace('./', '')}，已改用內建中文名單`,
           detail: error?.message ?? String(error),
-        });
+          count: nextPool.length,
+        };
       }
+
+      if (requestId !== nameListRequestId) return;
+
+      state.namePool = nextPool;
+      syncUsedNamesFromCards();
+      updateNameListButtons();
+      appendLog($('managerLog'), logType, '[System]', 'name-list', logData);
     }
 
     function claimNextUserName() {
@@ -773,7 +838,7 @@
       const userId = claimNextUserName();
       if (!userId) {
         if (!silent) {
-          alert('可用中文名稱已用完，請先刪除部分 User 或擴充 name-list.json');
+          alert('這份名單的名稱已用完，請先刪除部分 User 或改選另一份名單');
         }
         return false;
       }
@@ -1433,6 +1498,11 @@
       }
     });
 
+    $('nameListButtons').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-name-list]');
+      if (!btn || btn.dataset.nameList === state.activeNameListId) return;
+      loadNameList(btn.dataset.nameList);
+    });
     $('connectManagerBtn').addEventListener('click', connectManager);
     $('addUserBtn').addEventListener('click', () => addUser());
     $('batchAddUserBtn').addEventListener('click', batchAddUsers);
